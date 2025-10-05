@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
@@ -13,6 +13,5 @@ COPY . .
 
 # 暴露端口
 EXPOSE 5173
-
 # 開發模式啟動
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+CMD ["npm", "run", "dev"]

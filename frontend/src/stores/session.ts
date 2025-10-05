@@ -5,6 +5,8 @@ export interface User {
   id: string
   displayName: string
   preferredLang: string
+  inputLang?: string
+  outputLang?: string
 }
 
 export interface Room {

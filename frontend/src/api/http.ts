@@ -1,4 +1,8 @@
-const API_BASE = 'http://localhost:8081/api'
+// 自動檢測 API 基礎地址：開發時使用 localhost，生產時使用當前主機
+const API_BASE = `http://${window.location.hostname}:8081/api`
+// const API_BASE = process.env.NODE_ENV === 'production' 
+//   ? `http://${window.location.hostname}:8081/api`
+//   : 'http://localhost:8081/api'
 
 export interface ApiResponse<T = any> {
   data?: T
@@ -26,7 +30,6 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     },
     ...options
   }
-  
   const response = await fetch(`${API_BASE}${endpoint}`, config)
   
   if (!response.ok) {
@@ -37,19 +40,25 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return response.json()
 }
 
+
+
 // 認證 API
 export const authApi = {
-  async guestLogin(displayName: string, preferredLang: string = 'zh-TW') {
+  async guestLogin(displayName: string, preferredLang: string = 'zh-TW', inputLang: string = '', outputLang: string = 'zh-TW') {
     return request<{
       user_id: string
       token: string
       display_name: string
       preferred_lang: string
+      input_lang: string
+      output_lang: string
     }>('/auth/guest', {
       method: 'POST',
       body: JSON.stringify({
         display_name: displayName,
-        preferred_lang: preferredLang
+        preferred_lang: preferredLang,
+        input_lang: inputLang,
+        output_lang: outputLang
       })
     })
   }
