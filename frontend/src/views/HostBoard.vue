@@ -10,7 +10,7 @@
           {{ sessionStore.isConnected ? '已連線' : '連線中...' }}
         </div>
         <div class="room-stats">
-          線上人數: {{ onlineCount }}
+          線上人數: {{ onlineCount }} | 主板訊息: {{ sessionStore.boardMessages.length }}
         </div>
       </div>
       <div class="room-actions">
@@ -22,6 +22,9 @@
         </button>
         <button @click="copyUserLink" class="btn-primary">
           分享用戶連結
+        </button>
+        <button @click="showDebug = !showDebug" class="btn-secondary">
+          {{ showDebug ? '隱藏除錯' : '顯示除錯' }}
         </button>
       </div>
     </header>
@@ -45,6 +48,17 @@
           </div>
         </div>
       </div>
+
+      <!-- Debug 面板 -->
+      <div v-if="showDebug" class="debug-panel">
+        <h3>WebSocket 除錯訊息 ({{ debugMessages.length }})</h3>
+        <div class="debug-list">
+          <div v-for="(m, idx) in debugMessages" :key="idx" class="debug-item">
+            <div class="debug-meta">{{ m.ts }} - {{ m.type }}</div>
+            <pre class="debug-json">{{ m.pretty }}</pre>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 </template>
@@ -63,6 +77,9 @@ const sessionStore = useSessionStore()
 const messagesContainer = ref<HTMLElement>()
 const onlineCount = ref(0)
 const ws = ref<WebSocket | null>(null)
+const showDebug = ref(true)
+type DebugEntry = { ts: string; type: string; raw: string; pretty: string }
+const debugMessages = ref<DebugEntry[]>([])
 
 // 房間 ID
 const roomId = ref<string>('')
@@ -185,6 +202,16 @@ async function connectWebSocket() {
     ws.value.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data)
+        // 緩存除錯資料
+        debugMessages.value.push({
+          ts: new Date().toISOString(),
+          type: message?.type || 'unknown',
+          raw: event.data,
+          pretty: JSON.stringify(message, null, 2)
+        })
+        if (debugMessages.value.length > 200) {
+          debugMessages.value.splice(0, debugMessages.value.length - 200)
+        }
         console.log('🔄 Host收到WebSocket訊息:', message)
         console.log('🔍 訊息類型:', message.type)
         console.log('🔍 訊息內容:', JSON.stringify(message, null, 2))
@@ -192,6 +219,13 @@ async function connectWebSocket() {
       } catch (error) {
         console.error('❌ Parse WebSocket message failed:', error)
         console.error('❌ 原始資料:', event.data)
+        // 無法解析也記錄
+        debugMessages.value.push({
+          ts: new Date().toISOString(),
+          type: 'parse_error',
+          raw: String(event.data),
+          pretty: String(event.data)
+        })
       }
     }
     
@@ -477,5 +511,37 @@ function scrollToBottom() {
 
 .board-messages::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
+}
+
+/* Debug 面板樣式 */
+.debug-panel {
+  margin-top: 1rem;
+  background: rgba(0, 0, 0, 0.75);
+  color: #e9ecef;
+  padding: 1rem;
+  border-radius: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+.debug-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.debug-item {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+.debug-meta {
+  font-size: 0.8rem;
+  color: #b8bcc2;
+  margin-bottom: 0.25rem;
+}
+.debug-json {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
 }
 </style>

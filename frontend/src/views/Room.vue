@@ -226,9 +226,10 @@ async function connectWebSocket() {
   disconnectWebSocket()
   
   try {
-    // 自動檢測 WebSocket 地址：開發時使用 localhost，生產時使用當前主機
-    const wsHost = process.env.NODE_ENV === 'production' ? window.location.hostname : 'localhost'
-    const wsUrl = `ws://${wsHost}:8081/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
+    // 使用當前主機名和端口
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsHost = window.location.host
+    const wsUrl = `${wsProtocol}//${wsHost}/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
     ws.value = new WebSocket(wsUrl)
     
     ws.value.onopen = () => {

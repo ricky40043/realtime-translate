@@ -25,42 +25,63 @@ async def process_message_translation(
     room_id: str, 
     speaker_id: str, 
     text: str, 
-    source_lang: str,
-    db: asyncpg.Connection
+    source_lang: str
 ):
     """背景處理訊息翻譯和廣播"""
-    try:
-        # 取得在線使用者列表
-        online_users = await manager.get_room_users(room_id)
-        
-        # 計算目標語言
-        lang_router = LanguageRouter(db)
-        target_langs = await lang_router.get_all_target_languages(room_id, speaker_id, online_users)
-        
-        # 批次翻譯
-        translations = await translation_service.batch_translate(
-            text, list(target_langs), source_lang
-        )
-        
-        # 儲存翻譯結果
-        message_repo = MessageRepo(db)
-        for target_lang, translation in translations.items():
-            await message_repo.save_translation(
-                message_id=message_id,
-                target_lang=target_lang,
-                text=translation["text"],
-                latency_ms=translation.get("latency_ms"),
-                quality=translation.get("quality")
+    print(f"🔄 process_message_translation 開始執行...")
+    print(f"   message_id: {message_id}")
+    print(f"   room_id: {room_id}")
+    print(f"   speaker_id: {speaker_id}")
+    print(f"   text: {text}")
+    print(f"   source_lang: {source_lang}")
+    
+    # ✅ 重要：從連接池獲取新的資料庫連接
+    from ..db.pool import get_db_pool
+    pool = await get_db_pool()
+    
+    async with pool.acquire() as db:
+        try:
+            # 取得在線使用者列表
+            online_users = await manager.get_room_users(room_id)
+            print(f"   在線用戶數: {len(online_users)}")
+            
+            # 計算目標語言
+            lang_router = LanguageRouter(db)
+            target_langs = await lang_router.get_all_target_languages(room_id, speaker_id, online_users)
+            print(f"   目標語言: {target_langs}")
+            
+            # 批次翻譯
+            translations = await translation_service.batch_translate(
+                text, list(target_langs), source_lang
             )
-        
-        # 廣播給個人視圖和主板視圖
-        await broadcast_translations(
-            room_id, speaker_id, message_id, text, source_lang, 
-            translations, online_users, db
-        )
-        
-    except Exception as e:
-        print(f"Error processing message translation: {e}")
+            
+            print(f"🔄 翻譯結果:")
+            for lang, result in translations.items():
+                print(f"   {lang}: {result['text']}")
+            
+            # 儲存翻譯結果
+            message_repo = MessageRepo(db)
+            for target_lang, translation in translations.items():
+                await message_repo.save_translation(
+                    message_id=message_id,
+                    target_lang=target_lang,
+                    text=translation["text"],
+                    latency_ms=translation.get("latency_ms"),
+                    quality=translation.get("quality")
+                )
+            
+            # 廣播給個人視圖和主板視圖
+            await broadcast_translations(
+                room_id, speaker_id, message_id, text, source_lang, 
+                translations, online_users, db
+            )
+            
+            print(f"✅ process_message_translation 完成執行")
+            
+        except Exception as e:
+            print(f"❌ Error processing message translation: {e}")
+            import traceback
+            traceback.print_exc()
 
 async def broadcast_translations(
     room_id: str, speaker_id: str, message_id: str, original_text: str, 
@@ -150,10 +171,11 @@ async def ingest_text(
         # 只有最終稿才進行翻譯和廣播
         if request.is_final:
             # 在背景處理翻譯
+            # ✅ 不傳遞 db 連接，讓背景任務自己獲取新連接
             background_tasks.add_task(
                 process_message_translation,
                 message_id, request.room_id, current_user, 
-                request.text, source_lang, db
+                request.text, source_lang
             )
         
         return IngestResponse(
