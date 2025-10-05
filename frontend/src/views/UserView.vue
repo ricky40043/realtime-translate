@@ -11,9 +11,8 @@
       </div>
       <div class="language-settings">
         <div class="lang-setting">
-          <label>輸入語言:</label>
+          <label>我的慣用語(個人字幕):</label>
           <select v-model="inputLang" @change="updateSettings">
-            <option value="">自動偵測</option>
             <option value="zh-TW">繁體中文</option>
             <option value="zh-CN">簡體中文</option>
             <option value="en">English</option>
@@ -25,7 +24,7 @@
           </select>
         </div>
         <div class="lang-setting">
-          <label>輸出語言:</label>
+          <label>主板顯示語言:</label>
           <select v-model="outputLang" @change="updateSettings">
             <option value="zh-TW">繁體中文</option>
             <option value="zh-CN">簡體中文</option>
@@ -56,7 +55,8 @@
           <p>等待其他人發言...</p>
           <div class="connection-info">
             <p>房間人數: {{ connectedUsers }}</p>
-            <p>我的語言: 中文 → {{ outputLang }}</p>
+            <p>我的慣用語: {{ inputLang }}</p>
+            <p>主板顯示: {{ outputLang }}</p>
           </div>
         </div>
       </div>
@@ -123,8 +123,8 @@ const sessionStore = useSessionStore()
 
 // 響應式數據
 const inputText = ref('')
-const inputLang = ref('')
-const outputLang = ref('zh-TW')
+const inputLang = ref('zh-TW')  // 我的慣用語(個人字幕語言)
+const outputLang = ref('en')    // 主板顯示語言
 const isRecording = ref(false)
 const isProcessing = ref(false)
 const ws = ref<WebSocket | null>(null)
@@ -138,14 +138,13 @@ const stream = ref<MediaStream | null>(null)
 // 房間 ID
 const roomId = ref<string>('')
 
-// 計算屬性：獲取最新的他人訊息
+// 計算屬性：獲取最新的個人字幕訊息
 const latestMessage = computed(() => {
-  const messages = sessionStore.boardMessages
+  const messages = sessionStore.personalSubtitles
   if (messages.length === 0) return null
   
-  // 過濾掉自己的訊息，只顯示他人的
-  const othersMessages = messages.filter(msg => msg.speakerId !== sessionStore.user?.id)
-  return othersMessages.length > 0 ? othersMessages[othersMessages.length - 1] : null
+  // 顯示最新的個人字幕（包含自己和他人的）
+  return messages[messages.length - 1]
 })
 
 // 初始化
@@ -192,7 +191,8 @@ watch(() => route.params.roomId, async (newRoomId) => {
 async function performGuestLogin() {
   try {
     const userName = `用戶_${Math.random().toString(36).substr(2, 6)}`
-    const response = await authApi.guestLogin(userName, outputLang.value, inputLang.value, outputLang.value)
+    console.log(`👤 創建用戶: ${userName}, 慣用語: ${inputLang.value}, 主板語言: ${outputLang.value}`)
+    const response = await authApi.guestLogin(userName, inputLang.value, inputLang.value, outputLang.value)
     
     sessionStore.setAuth(
       {
@@ -289,23 +289,15 @@ function handleWebSocketMessage(message: any) {
   
   switch (message.type) {
     case 'board.post':
-      console.log('📢 主板訊息:', message.text, `(${message.speakerName})`)
-      sessionStore.addBoardMessage({
-        id: message.messageId,
-        speakerId: message.speakerId,
-        speakerName: message.speakerName,
-        text: message.text,
-        sourceLang: message.sourceLang,
-        targetLang: message.targetLang,
-        timestamp: message.timestamp,
-        type: 'board'
-      })
+      // 用戶視圖不處理主板訊息，主板訊息是給Host看的
+      console.log('📢 主板訊息(忽略):', message.text, `(${message.speakerName})`)
+      // 不添加到 boardMessages，用戶只看個人字幕
       break
       
     case 'personal.subtitle':
       console.log('👤 個人字幕:', message.text, `(${message.speakerName})`, `[${message.sourceLang}→${message.targetLang}]`)
-      // 個人字幕：使用輸出語言翻譯
-      if (message.targetLang === outputLang.value) {
+      // 個人字幕：使用我的慣用語顯示
+      if (message.targetLang === inputLang.value) {
         sessionStore.addPersonalSubtitle({
           id: message.messageId,
           speakerId: message.speakerId || '',
@@ -543,31 +535,31 @@ async function updateSettings() {
   }
   localStorage.setItem('userLanguageSettings', JSON.stringify(settings))
   
-  // 更新用戶偏好語言到後端
+  // 更新用戶語言設定到後端
   if (sessionStore.user && sessionStore.token) {
     try {
-      console.log(`🔄 更新語言偏好為: ${outputLang.value}`)
+      console.log(`🔄 更新語言設定 - 慣用語: ${inputLang.value}, 主板: ${outputLang.value}`)
       
-      const response = await fetch('http://localhost:8081/api/auth/update-lang', {
+      const response = await fetch('http://localhost:8081/api/auth/update-langs', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${sessionStore.token}`
         },
         body: JSON.stringify({
-          preferred_lang: outputLang.value
+          input_lang: inputLang.value,
+          output_lang: outputLang.value
         })
       })
       
       if (response.ok) {
         const result = await response.json()
-        console.log(`✅ 語言偏好已更新: ${result.preferred_lang}`)
-        sessionStore.updateUserLang(outputLang.value)
+        console.log(`✅ 語言設定已更新: 慣用語=${result.input_lang}, 主板=${result.output_lang}`)
       } else {
-        console.error('❌ 更新語言偏好失敗:', response.status)
+        console.error('❌ 更新語言設定失敗:', response.status)
       }
     } catch (error) {
-      console.error('❌ 更新語言偏好錯誤:', error)
+      console.error('❌ 更新語言設定錯誤:', error)
     }
   }
 }
