@@ -28,15 +28,24 @@ class LanguageRouter:
         overrides = await self.room_repo.get_lang_overrides(room_id)
         override_map = {ov["speakerId"]: ov["targetLang"] for ov in overrides}
         
-        # 個人視圖：收集所有在線使用者的偏好語言
+        # 個人視圖：收集所有在線使用者的慣用語（input_lang）
         personal_langs = set()
         for user_id in online_users:
             user = await self.user_repo.get_user(user_id)
             if user:
-                personal_langs.add(user["preferred_lang"])
+                # 使用用戶的慣用語（個人字幕語言）
+                user_input_lang = user.get("input_lang") or user.get("preferred_lang", "zh-TW")
+                personal_langs.add(user_input_lang)
         
-        # 主板視圖：使用講者的覆寫語言或預設主板語言
-        board_lang = override_map.get(speaker_id, room["default_board_lang"])
+        # 主板視圖：使用講者的輸出語言（主板顯示語言）
+        speaker = await self.user_repo.get_user(speaker_id)
+        if speaker:
+            # 使用講者的輸出語言作為主板語言
+            board_lang = speaker.get("output_lang") or speaker.get("preferred_lang", "en")
+        else:
+            # 如果找不到講者，使用覆寫語言或預設主板語言
+            board_lang = override_map.get(speaker_id, room["default_board_lang"])
+        
         board_langs = {board_lang}
         
         return {

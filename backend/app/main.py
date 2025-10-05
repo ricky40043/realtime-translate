@@ -45,7 +45,7 @@ async def websocket_endpoint(websocket: WebSocket, roomId: str, userId: str, tok
             # 處理客戶端訊息（如果需要）
             await manager.handle_client_message(websocket, data)
     except WebSocketDisconnect:
-        manager.disconnect(websocket, roomId, userId)
+        await manager.disconnect(websocket, roomId, userId)
 
 @app.get("/")
 async def root():

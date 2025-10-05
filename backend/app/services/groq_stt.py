@@ -32,8 +32,12 @@ class GroqSTTService:
         start_time = time.time()
         
         try:
+            # 根據內容類型決定檔案後綴
+            suffix = self._get_file_suffix(content_type)
+            print(f"🎤 處理音頻格式: {content_type} -> {suffix}")
+            
             # 將音頻資料寫入臨時檔案
-            with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
                 temp_file.write(audio_data)
                 temp_file_path = temp_file.name
             
@@ -160,6 +164,29 @@ class GroqSTTService:
         }
         
         return lang_mapping.get(lang_code, "en")
+    
+    def _get_file_suffix(self, content_type: str) -> str:
+        """根據內容類型獲取檔案後綴"""
+        type_mapping = {
+            'audio/wav': '.wav',
+            'audio/mp4': '.m4a', 
+            'audio/mpeg': '.mp3',
+            'audio/webm': '.webm',
+            'audio/ogg': '.ogg',
+            'audio/x-wav': '.wav',
+            'audio/vnd.wav': '.wav'
+        }
+        
+        # 優先匹配完整類型
+        if content_type in type_mapping:
+            return type_mapping[content_type]
+        
+        # 部分匹配
+        for mime_type, suffix in type_mapping.items():
+            if content_type.startswith(mime_type.split('/')[0]) and mime_type.split('/')[1] in content_type:
+                return suffix
+        
+        return '.webm'  # 預設
     
     async def _mock_transcribe(self, audio_data: bytes, language_code: str) -> Dict:
         """模擬語音轉錄回退"""

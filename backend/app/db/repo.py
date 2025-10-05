@@ -7,21 +7,36 @@ class UserRepo:
     def __init__(self, conn: asyncpg.Connection):
         self.conn = conn
     
-    async def create_guest_user(self, display_name: str, preferred_lang: str) -> str:
+    async def create_guest_user(self, display_name: str, preferred_lang: str, input_lang: str = "zh-TW", output_lang: str = "en") -> str:
         """建立匿名使用者"""
         user_id = str(uuid.uuid4())
+        
+        # 檢查並添加欄位（如果不存在）
+        try:
+            await self.conn.execute("ALTER TABLE app_user ADD COLUMN IF NOT EXISTS input_lang VARCHAR(10) DEFAULT 'zh-TW'")
+            await self.conn.execute("ALTER TABLE app_user ADD COLUMN IF NOT EXISTS output_lang VARCHAR(10) DEFAULT 'en'")
+        except:
+            pass  # 欄位可能已存在
+        
         await self.conn.execute(
-            "INSERT INTO app_user (id, display_name, preferred_lang) VALUES ($1, $2, $3)",
-            user_id, display_name, preferred_lang
+            "INSERT INTO app_user (id, display_name, preferred_lang, input_lang, output_lang) VALUES ($1, $2, $3, $4, $5)",
+            user_id, display_name, preferred_lang, input_lang, output_lang
         )
         return user_id
     
     async def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         """取得使用者資料"""
-        row = await self.conn.fetchrow(
-            "SELECT id, display_name, preferred_lang, created_at FROM app_user WHERE id = $1",
-            user_id
-        )
+        try:
+            row = await self.conn.fetchrow(
+                "SELECT id, display_name, preferred_lang, input_lang, output_lang, created_at FROM app_user WHERE id = $1",
+                user_id
+            )
+        except:
+            # 如果新欄位不存在，使用舊格式
+            row = await self.conn.fetchrow(
+                "SELECT id, display_name, preferred_lang, created_at FROM app_user WHERE id = $1",
+                user_id
+            )
         return dict(row) if row else None
     
     async def update_preferred_lang(self, user_id: str, preferred_lang: str):
@@ -29,6 +44,13 @@ class UserRepo:
         await self.conn.execute(
             "UPDATE app_user SET preferred_lang = $2 WHERE id = $1",
             user_id, preferred_lang
+        )
+    
+    async def update_user_languages(self, user_id: str, input_lang: str, output_lang: str):
+        """更新使用者輸入和輸出語言"""
+        await self.conn.execute(
+            "UPDATE app_user SET input_lang = $2, output_lang = $3 WHERE id = $1",
+            user_id, input_lang, output_lang
         )
 
 class RoomRepo:

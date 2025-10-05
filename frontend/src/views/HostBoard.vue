@@ -186,9 +186,12 @@ async function connectWebSocket() {
       try {
         const message = JSON.parse(event.data)
         console.log('🔄 Host收到WebSocket訊息:', message)
+        console.log('🔍 訊息類型:', message.type)
+        console.log('🔍 訊息內容:', JSON.stringify(message, null, 2))
         handleWebSocketMessage(message)
       } catch (error) {
-        console.error('Parse WebSocket message failed:', error)
+        console.error('❌ Parse WebSocket message failed:', error)
+        console.error('❌ 原始資料:', event.data)
       }
     }
     
@@ -223,9 +226,12 @@ function disconnectWebSocket() {
 
 // 處理 WebSocket 訊息
 function handleWebSocketMessage(message: any) {
+  console.log(`🎯 Host處理訊息: ${message.type}`)
+  
   switch (message.type) {
     case 'board.post':
-      console.log('📢 Host接收主板訊息:', message.text, `[${message.sourceLang}→${message.targetLang}]`, `(${message.speakerName})`)
+      console.log('📢 【HOST收到主板訊息】:', message.text, `[${message.sourceLang}→${message.targetLang}]`, `(${message.speakerName})`)
+      console.log('📢 完整訊息內容:', message)
       sessionStore.addBoardMessage({
         id: message.messageId,
         speakerId: message.speakerId,
@@ -236,19 +242,38 @@ function handleWebSocketMessage(message: any) {
         timestamp: message.timestamp,
         type: 'board'
       })
+      console.log('📢 已添加到 boardMessages，當前數量:', sessionStore.boardMessages.length)
       break
       
-    case 'room.userCount':
-      onlineCount.value = message.count
+    case 'personal.subtitle':
+      console.log('👤 【HOST收到個人字幕】(應該忽略):', message.text, `(${message.speakerName})`)
+      // Host不處理個人字幕，但記錄收到
+      break
+      
+    case 'user.connected':
+      console.log('👋 【用戶連線】:', message.message, `(房間人數: ${message.userCount})`)
+      onlineCount.value = message.userCount
+      break
+      
+    case 'user.disconnected':
+      console.log('👋 【用戶離開】:', message.message, `(房間人數: ${message.userCount})`)
+      onlineCount.value = message.userCount
       break
       
     case 'connection.established':
-      console.log('Host connection established:', message)
+      console.log('🎉 【Host連線已建立】:', message)
+      break
+      
+    case 'room.userCount':
+      console.log('📊 【房間人數更新】:', message.count)
+      onlineCount.value = message.count
       break
       
     default:
-      console.log('Unknown message type:', message)
+      console.log('❓ 【未知訊息類型】:', message.type, message)
   }
+  
+  console.log(`✅ Host處理完成: ${message.type}`)
 }
 
 // 複製房間連結

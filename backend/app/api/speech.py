@@ -25,6 +25,7 @@ async def process_speech_translation(
     source_lang: str,
     db: asyncpg.Connection
 ):
+    print(f"🔄 process_speech_translation 開始執行...")
     """背景處理語音轉文字的翻譯和廣播"""
     try:
         # 取得在線使用者列表
@@ -34,10 +35,22 @@ async def process_speech_translation(
         lang_router = LanguageRouter(db)
         target_langs = await lang_router.get_all_target_languages(room_id, speaker_id, online_users)
         
+        print(f"🔍 語音翻譯調試:")
+        print(f"   房間ID: {room_id}")
+        print(f"   講者ID: {speaker_id}")
+        print(f"   原文: {text}")
+        print(f"   源語言: {source_lang}")
+        print(f"   在線用戶: {online_users}")
+        print(f"   目標語言: {target_langs}")
+        
         # 批次翻譯
         translations = await translation_service.batch_translate(
             text, list(target_langs), source_lang
         )
+        
+        print(f"🔄 翻譯結果:")
+        for lang, result in translations.items():
+            print(f"   {lang}: {result['text']} (提供者: {result.get('provider', 'unknown')})")
         
         # 儲存翻譯結果
         message_repo = MessageRepo(db)
@@ -76,42 +89,57 @@ async def broadcast_speech_translations(
         lang_router = LanguageRouter(db)
         lang_sets = await lang_router.get_target_languages(room_id, speaker_id, online_users)
         
-        # 廣播個人字幕給每個使用者
+        # 廣播個人字幕給每個使用者（根據每個人的輸入語言/慣用語）
         for user_id in online_users:
             user = await user_repo.get_user(user_id)
             if user:
-                user_lang = user["preferred_lang"]
-                translated_text = translations.get(user_lang, {}).get("text", original_text)
+                # 用戶的慣用語（輸入語言）
+                user_input_lang = user["input_lang"] if user.get("input_lang") else user["preferred_lang"]
+                translated_text = translations.get(user_input_lang, {}).get("text", original_text)
+                
+                print(f"📤 發送個人字幕:")
+                print(f"   用戶: {user_id[:8]}...")
+                print(f"   慣用語: {user_input_lang}")
+                print(f"   翻譯文字: {translated_text}")
                 
                 personal_message = {
                     "type": "personal.subtitle",
                     "messageId": message_id,
-                    "targetLang": user_lang,
+                    "targetLang": user_input_lang,
                     "text": translated_text,
                     "speakerName": speaker_name,
+                    "sourceLang": source_lang,
                     "source": "speech",
                     "timestamp": None
                 }
                 
                 await manager.send_to_user(room_id, user_id, personal_message)
         
-        # 廣播主板訊息
-        board_lang = list(lang_sets["board"])[0] if lang_sets["board"] else "en"
-        board_text = translations.get(board_lang, {}).get("text", original_text)
-        
-        board_message = {
-            "type": "board.post",
-            "messageId": message_id,
-            "speakerId": speaker_id,
-            "speakerName": speaker_name,
-            "targetLang": board_lang,
-            "text": board_text,
-            "sourceLang": source_lang,
-            "source": "speech",
-            "timestamp": None
-        }
-        
-        await manager.broadcast_to_room(room_id, board_message)
+        # 廣播主板訊息：顯示講者的輸出語言版本（講者想讓主板顯示的語言）
+        speaker = await user_repo.get_user(speaker_id)
+        if speaker:
+            # 講者想讓主板顯示的語言版本（輸出語言）
+            speaker_output_lang = speaker["output_lang"] if speaker.get("output_lang") else speaker["preferred_lang"]
+            speaker_board_text = translations.get(speaker_output_lang, {}).get("text", original_text)
+            
+            print(f"📢 主板訊息廣播:")
+            print(f"   講者輸出語言: {speaker_output_lang}")
+            print(f"   主板顯示文字: {speaker_board_text}")
+            
+            board_message = {
+                "type": "board.post",
+                "messageId": message_id,
+                "speakerId": speaker_id,
+                "speakerName": speaker["display_name"],
+                "targetLang": speaker_output_lang,
+                "text": speaker_board_text,
+                "sourceLang": source_lang,
+                "source": "speech",
+                "timestamp": None
+            }
+            
+            # 廣播給房間內所有用戶（相同內容）
+            await manager.broadcast_to_room(room_id, board_message)
         
     except Exception as e:
         print(f"Error broadcasting speech translations: {e}")
@@ -177,6 +205,13 @@ async def upload_speech(
         )
         
         # 在背景處理翻譯
+        print(f"🚀 啟動背景翻譯任務...")
+        print(f"   message_id: {message_id}")
+        print(f"   room_id: {room_id}")
+        print(f"   speaker_id: {current_user}")
+        print(f"   transcript: {transcript}")
+        print(f"   detected_lang: {detected_lang}")
+        
         background_tasks.add_task(
             process_speech_translation,
             message_id, room_id, current_user, 

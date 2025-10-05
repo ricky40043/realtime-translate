@@ -6,6 +6,8 @@ CREATE TABLE app_user (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   display_name TEXT NOT NULL,
   preferred_lang TEXT NOT NULL,
+  input_lang TEXT DEFAULT '',
+  output_lang TEXT DEFAULT 'zh-TW',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

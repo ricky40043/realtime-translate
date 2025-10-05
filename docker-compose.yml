@@ -31,6 +31,8 @@ services:
     environment:
       - POSTGRES_URL=postgres://user:postgres@db:5432/rt
       - REDIS_URL=redis://redis:6379
+    networks:
+      - default
 
   frontend:
     build: ./frontend
@@ -39,6 +41,14 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
 
 volumes:
   postgres_data:

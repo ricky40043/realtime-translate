@@ -190,20 +190,35 @@ watch(() => route.params.roomId, async (newRoomId) => {
 // 匿名登入
 async function performGuestLogin() {
   try {
+    // 檢查是否已有用戶session，避免重複創建
+    const existingSession = localStorage.getItem('userSession')
+    if (existingSession) {
+      const session = JSON.parse(existingSession)
+      console.log(`♻️ 重用現有用戶: ${session.displayName}`)
+      sessionStore.setAuth(session.user, session.token)
+      return
+    }
+    
     const userName = `用戶_${Math.random().toString(36).substr(2, 6)}`
-    console.log(`👤 創建用戶: ${userName}, 慣用語: ${inputLang.value}, 主板語言: ${outputLang.value}`)
+    console.log(`👤 創建新用戶: ${userName}, 慣用語: ${inputLang.value}, 主板語言: ${outputLang.value}`)
     const response = await authApi.guestLogin(userName, inputLang.value, inputLang.value, outputLang.value)
     
-    sessionStore.setAuth(
-      {
-        id: response.user_id,
-        displayName: response.display_name,
-        preferredLang: response.preferred_lang,
-        inputLang: response.input_lang,
-        outputLang: response.output_lang
-      },
-      response.token
-    )
+    const userInfo = {
+      id: response.user_id,
+      displayName: response.display_name,
+      preferredLang: response.preferred_lang,
+      inputLang: response.input_lang,
+      outputLang: response.output_lang
+    }
+    
+    sessionStore.setAuth(userInfo, response.token)
+    
+    // 保存session避免重複創建
+    localStorage.setItem('userSession', JSON.stringify({
+      user: userInfo,
+      token: response.token,
+      timestamp: Date.now()
+    }))
   } catch (error) {
     console.error('Guest login failed:', error)
     alert('登入失敗，請重新整理頁面')

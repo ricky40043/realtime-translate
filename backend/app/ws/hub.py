@@ -47,9 +47,19 @@ class ConnectionManager:
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        print(f"User {user_id} connected to room {room_id}")
+        print(f"User {user_id} connected to room {room_id} (房間人數: {len(self.rooms[room_id])})")
+        
+        # 廣播用戶連線訊息給房間內其他用戶
+        await self.broadcast_to_room(room_id, {
+            "type": "user.connected",
+            "roomId": room_id,
+            "userId": user_id,
+            "message": f"用戶 {user_id} 已連線",
+            "userCount": len(self.rooms[room_id]),
+            "timestamp": datetime.utcnow().isoformat()
+        })
     
-    def disconnect(self, websocket: WebSocket, room_id: str, user_id: str):
+    async def disconnect(self, websocket: WebSocket, room_id: str, user_id: str):
         """斷開 WebSocket 連線"""
         # 清除連線記錄
         if websocket in self.connections:
@@ -58,11 +68,23 @@ class ConnectionManager:
         if room_id in self.rooms and user_id in self.rooms[room_id]:
             del self.rooms[room_id][user_id]
             
+            # 廣播用戶斷線訊息給房間內其他用戶（在刪除用戶之後但房間還存在時）
+            if self.rooms[room_id]:  # 如果房間還有其他用戶
+                await self.broadcast_to_room(room_id, {
+                    "type": "user.disconnected",
+                    "roomId": room_id,
+                    "userId": user_id,
+                    "message": f"用戶 {user_id} 已離開",
+                    "userCount": len(self.rooms[room_id]),
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+            
             # 如果房間沒有人了，清除房間
             if not self.rooms[room_id]:
                 del self.rooms[room_id]
         
-        print(f"User {user_id} disconnected from room {room_id}")
+        remaining_users = len(self.rooms.get(room_id, {}))
+        print(f"User {user_id} disconnected from room {room_id} (剩餘人數: {remaining_users})")
     
     async def send_to_user(self, room_id: str, user_id: str, message: dict):
         """發送訊息給特定使用者"""
@@ -73,6 +95,11 @@ class ConnectionManager:
     async def broadcast_to_room(self, room_id: str, message: dict):
         """廣播訊息給房間內所有使用者"""
         if room_id in self.rooms:
+            # 只保留簡單的廣播日誌
+            if message.get('type') == 'board.post':
+                print(f"📡 廣播主板訊息到房間 {room_id[:8]}... (用戶數: {len(self.rooms[room_id])})")
+                print(f"📡 內容: {message.get('text', 'N/A')}")
+            
             disconnected = []
             for user_id, websocket in self.rooms[room_id].items():
                 try:
@@ -83,7 +110,7 @@ class ConnectionManager:
             
             # 清理斷線的連線
             for websocket, room_id, user_id in disconnected:
-                self.disconnect(websocket, room_id, user_id)
+                await self.disconnect(websocket, room_id, user_id)
     
     async def send_to_websocket(self, websocket: WebSocket, message: dict):
         """發送訊息給 WebSocket 連線"""
