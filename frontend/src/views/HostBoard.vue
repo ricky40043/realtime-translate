@@ -185,6 +185,7 @@ async function connectWebSocket() {
     ws.value.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data)
+        console.log('🔄 Host收到WebSocket訊息:', message)
         handleWebSocketMessage(message)
       } catch (error) {
         console.error('Parse WebSocket message failed:', error)
@@ -224,6 +225,7 @@ function disconnectWebSocket() {
 function handleWebSocketMessage(message: any) {
   switch (message.type) {
     case 'board.post':
+      console.log('📢 Host接收主板訊息:', message.text, `[${message.sourceLang}→${message.targetLang}]`, `(${message.speakerName})`)
       sessionStore.addBoardMessage({
         id: message.messageId,
         speakerId: message.speakerId,
