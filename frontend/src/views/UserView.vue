@@ -190,14 +190,9 @@ watch(() => route.params.roomId, async (newRoomId) => {
 // 匿名登入
 async function performGuestLogin() {
   try {
-    // 檢查是否已有用戶session，避免重複創建
-    const existingSession = localStorage.getItem('userSession')
-    if (existingSession) {
-      const session = JSON.parse(existingSession)
-      console.log(`♻️ 重用現有用戶: ${session.displayName}`)
-      sessionStore.setAuth(session.user, session.token)
-      return
-    }
+    // 為了測試多用戶場景，每個頁面都創建新的用戶
+    // 在生產環境中可能需要不同的邏輯
+    console.log('🆕 為每個頁面創建新用戶（測試模式）')
     
     const userName = `用戶_${Math.random().toString(36).substr(2, 6)}`
     console.log(`👤 創建新用戶: ${userName}, 慣用語: ${inputLang.value}, 主板語言: ${outputLang.value}`)
@@ -213,12 +208,8 @@ async function performGuestLogin() {
     
     sessionStore.setAuth(userInfo, response.token)
     
-    // 保存session避免重複創建
-    localStorage.setItem('userSession', JSON.stringify({
-      user: userInfo,
-      token: response.token,
-      timestamp: Date.now()
-    }))
+    // 測試模式：不保存 session，每個頁面都是獨立用戶
+    console.log(`✅ 用戶創建完成: ${userInfo.displayName} (${userInfo.id.substring(0, 8)}...)`)
   } catch (error) {
     console.error('Guest login failed:', error)
     alert('登入失敗，請重新整理頁面')
