@@ -47,12 +47,17 @@
           <div class="subtitle-meta">
             <span class="speaker">{{ latestMessage.speakerName }}</span>
             <span class="lang-info">{{ latestMessage.sourceLang }} → {{ outputLang }}</span>
+            <span class="timestamp">{{ formatTimestamp(latestMessage.timestamp) }}</span>
           </div>
           <div class="subtitle-text">{{ latestMessage.text }}</div>
         </div>
         <div v-else class="waiting-message">
           <div class="waiting-icon">👂</div>
           <p>等待其他人發言...</p>
+          <div class="connection-info">
+            <p>房間人數: {{ connectedUsers }}</p>
+            <p>我的語言: 中文 → {{ outputLang }}</p>
+          </div>
         </div>
       </div>
     </main>
@@ -123,6 +128,7 @@ const outputLang = ref('zh-TW')
 const isRecording = ref(false)
 const isProcessing = ref(false)
 const ws = ref<WebSocket | null>(null)
+const connectedUsers = ref(0)
 
 // 錄音相關
 const mediaRecorder = ref<MediaRecorder | null>(null)
@@ -157,10 +163,8 @@ onMounted(async () => {
   
   roomId.value = routeRoomId
   
-  // 如果未登入，先進行匿名登入
-  if (!sessionStore.isAuthenticated) {
-    await performGuestLogin()
-  }
+  // 每次都進行新的匿名登入，確保每個分頁有不同的用戶ID
+  await performGuestLogin()
   
   // 載入用戶語言設定
   loadUserSettings()
@@ -281,8 +285,11 @@ function disconnectWebSocket() {
 
 // 處理 WebSocket 訊息
 function handleWebSocketMessage(message: any) {
+  console.log('🔄 收到 WebSocket 訊息:', message)
+  
   switch (message.type) {
     case 'board.post':
+      console.log('📢 主板訊息:', message.text, `(${message.speakerName})`)
       sessionStore.addBoardMessage({
         id: message.messageId,
         speakerId: message.speakerId,
@@ -296,6 +303,7 @@ function handleWebSocketMessage(message: any) {
       break
       
     case 'personal.subtitle':
+      console.log('👤 個人字幕:', message.text, `(${message.speakerName})`, `[${message.sourceLang}→${message.targetLang}]`)
       // 個人字幕：使用輸出語言翻譯
       if (message.targetLang === outputLang.value) {
         sessionStore.addPersonalSubtitle({
@@ -312,11 +320,21 @@ function handleWebSocketMessage(message: any) {
       break
       
     case 'connection.established':
-      console.log('User connection established:', message)
+      console.log('🎉 連線已建立:', message)
+      break
+      
+    case 'user.connected':
+      console.log('👋 用戶連線:', message.message, `(房間人數: ${message.userCount})`)
+      connectedUsers.value = message.userCount
+      break
+      
+    case 'user.disconnected':
+      console.log('👋 用戶離開:', message.message, `(房間人數: ${message.userCount})`)
+      connectedUsers.value = message.userCount
       break
       
     default:
-      console.log('Unknown message type:', message)
+      console.log('❓ 未知訊息類型:', message.type, message)
   }
 }
 
@@ -528,6 +546,12 @@ function updateSettings() {
     sessionStore.updateUserLang(outputLang.value)
   }
 }
+
+// 格式化時間戳
+function formatTimestamp(timestamp: string | null) {
+  if (!timestamp) return ''
+  return new Date(timestamp).toLocaleTimeString()
+}
 </script>
 
 <style scoped>
@@ -640,6 +664,23 @@ function updateSettings() {
   padding: 0.25rem 0.75rem;
   border-radius: 12px;
   font-size: 0.8rem;
+}
+
+.timestamp {
+  font-size: 0.8rem;
+  color: #999;
+  font-style: italic;
+}
+
+.connection-info {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: #666;
+  text-align: center;
+}
+
+.connection-info p {
+  margin: 0.25rem 0;
 }
 
 .subtitle-text {
