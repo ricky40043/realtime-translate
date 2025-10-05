@@ -484,33 +484,35 @@ async function uploadAudio(audioBlob: Blob) {
   console.log('✅ 語音轉文字成功:', result)
 }
 
-// 獲取支援的 MIME 類型
+// 獲取支援的 MIME 類型（優先使用Groq相容格式）
 function getSupportedMimeType(): string {
   const types = [
+    'audio/wav',           // Groq最佳支援
+    'audio/mp4',           // Groq支援
     'audio/webm;codecs=opus',
     'audio/webm',
-    'audio/mp4',
-    'audio/ogg;codecs=opus',
-    'audio/wav'
+    'audio/ogg;codecs=opus'
   ]
   
   for (const type of types) {
     if (MediaRecorder.isTypeSupported(type)) {
+      console.log(`🎤 使用音頻格式: ${type}`)
       return type
     }
   }
   
+  console.log('🎤 使用預設音頻格式: audio/webm')
   return 'audio/webm'
 }
 
 // 獲取檔案副檔名
 function getFileExtension(): string {
   const mimeType = getSupportedMimeType()
-  if (mimeType.includes('webm')) return 'webm'
-  if (mimeType.includes('mp4')) return 'm4a'
-  if (mimeType.includes('ogg')) return 'ogg'
   if (mimeType.includes('wav')) return 'wav'
-  return 'webm'
+  if (mimeType.includes('mp4')) return 'm4a'
+  if (mimeType.includes('webm')) return 'webm'
+  if (mimeType.includes('ogg')) return 'ogg'
+  return 'wav'
 }
 
 // 清理資源
@@ -534,16 +536,39 @@ function loadUserSettings() {
 }
 
 // 更新設定
-function updateSettings() {
+async function updateSettings() {
   const settings = {
     inputLang: inputLang.value,
     outputLang: outputLang.value
   }
   localStorage.setItem('userLanguageSettings', JSON.stringify(settings))
   
-  // 更新用戶偏好語言
-  if (sessionStore.user) {
-    sessionStore.updateUserLang(outputLang.value)
+  // 更新用戶偏好語言到後端
+  if (sessionStore.user && sessionStore.token) {
+    try {
+      console.log(`🔄 更新語言偏好為: ${outputLang.value}`)
+      
+      const response = await fetch('http://localhost:8081/api/auth/update-lang', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStore.token}`
+        },
+        body: JSON.stringify({
+          preferred_lang: outputLang.value
+        })
+      })
+      
+      if (response.ok) {
+        const result = await response.json()
+        console.log(`✅ 語言偏好已更新: ${result.preferred_lang}`)
+        sessionStore.updateUserLang(outputLang.value)
+      } else {
+        console.error('❌ 更新語言偏好失敗:', response.status)
+      }
+    } catch (error) {
+      console.error('❌ 更新語言偏好錯誤:', error)
+    }
   }
 }
 
