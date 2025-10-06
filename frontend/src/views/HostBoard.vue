@@ -189,9 +189,10 @@ async function connectWebSocket() {
   disconnectWebSocket()
   
   try {
-    // 自動檢測 WebSocket 地址：開發時使用 localhost，生產時使用當前主機
-    const wsHost = process.env.NODE_ENV === 'production' ? window.location.hostname : 'localhost'
-    const wsUrl = `ws://${wsHost}:8081/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
+    // 自動檢測 WebSocket 地址：使用當前頁面的協議和主機
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsHost = window.location.host
+    const wsUrl = `${wsProtocol}//${wsHost}/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
     ws.value = new WebSocket(wsUrl)
     
     ws.value.onopen = () => {
@@ -543,5 +544,131 @@ function scrollToBottom() {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.85rem;
+}
+
+/* Mobile responsive styles */
+@media (max-width: 768px) {
+  .host-header {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  
+  .room-info {
+    text-align: center;
+    width: 100%;
+  }
+  
+  .room-info h1 {
+    font-size: 1.2rem;
+  }
+  
+  .room-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  
+  .btn-secondary, .btn-primary {
+    padding: 0.75rem 1rem;
+    font-size: 0.8rem;
+    min-width: 80px;
+  }
+  
+  .host-main {
+    padding: 1rem;
+  }
+  
+  .board-messages-container {
+    padding: 1rem;
+    border-radius: 8px;
+  }
+  
+  .board-messages {
+    padding-right: 0.5rem;
+  }
+  
+  .message-item {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+  }
+  
+  .message-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  
+  .message-content {
+    font-size: 1rem;
+  }
+  
+  .debug-panel {
+    max-height: 200px;
+    padding: 0.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .host-header {
+    padding: 0.75rem;
+  }
+  
+  .room-info h1 {
+    font-size: 1rem;
+  }
+  
+  .connection-status {
+    font-size: 0.8rem;
+  }
+  
+  .room-stats {
+    font-size: 0.7rem;
+  }
+  
+  .room-actions {
+    gap: 0.25rem;
+  }
+  
+  .btn-secondary, .btn-primary {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    min-width: 70px;
+  }
+  
+  .host-main {
+    padding: 0.75rem;
+  }
+  
+  .board-messages-container {
+    padding: 0.75rem;
+  }
+  
+  .message-item {
+    padding: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  
+  .message-header {
+    font-size: 0.75rem;
+  }
+  
+  .language-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.4rem;
+  }
+  
+  .message-content {
+    font-size: 0.9rem;
+  }
+  
+  .debug-panel {
+    max-height: 150px;
+    padding: 0.5rem;
+  }
+  
+  .debug-json {
+    font-size: 0.75rem;
+  }
 }
 </style>

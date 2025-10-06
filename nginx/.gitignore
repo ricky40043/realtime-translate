@@ -1,0 +1,8 @@
+# SSL 證書文件
+ssl/*.pem
+ssl/*.key
+ssl/*.crt
+ssl/*.csr
+
+# 日誌文件
+*.log

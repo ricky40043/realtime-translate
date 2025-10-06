@@ -1,8 +1,10 @@
-// 自動檢測 API 基礎地址：開發時使用 localhost，生產時使用當前主機
-const API_BASE = `http://${window.location.hostname}:8081/api`
-// const API_BASE = process.env.NODE_ENV === 'production' 
-//   ? `http://${window.location.hostname}:8081/api`
-//   : 'http://localhost:8081/api'
+// API 基礎地址配置
+// 使用 nginx 代理時，API 路徑為 /api
+// 開發環境可以通過環境變數覆蓋
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 
+  (import.meta.env.PROD ? '/api' : `http://${window.location.hostname}:8081/api`)
+
+console.log('🔗 API_BASE:', API_BASE)
 
 export interface ApiResponse<T = any> {
   data?: T

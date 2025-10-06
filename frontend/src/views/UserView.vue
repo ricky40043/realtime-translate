@@ -241,9 +241,10 @@ async function connectWebSocket() {
   disconnectWebSocket()
   
   try {
-    // 自動檢測 WebSocket 地址：始終使用當前頁面的主機名
-    const wsHost = window.location.hostname
-    const wsUrl = `ws://${wsHost}:8081/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
+    // 自動檢測 WebSocket 地址：使用當前頁面的協議和主機
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsHost = window.location.host
+    const wsUrl = `${wsProtocol}//${wsHost}/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
     ws.value = new WebSocket(wsUrl)
     
     ws.value.onopen = () => {
@@ -759,6 +760,8 @@ function formatTimestamp(timestamp: string | null) {
   cursor: pointer;
   transition: all 0.3s;
   user-select: none;
+  min-width: 120px;
+  min-height: 80px;
 }
 
 .voice-btn:hover:not(:disabled) {
@@ -842,5 +845,162 @@ function formatTimestamp(timestamp: string | null) {
 @keyframes pulse {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.1); }
+}
+
+/* Mobile responsive styles */
+@media (max-width: 768px) {
+  .user-header {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  
+  .room-info {
+    text-align: center;
+    width: 100%;
+  }
+  
+  .room-info h2 {
+    font-size: 1.1rem;
+  }
+  
+  .language-settings {
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+  }
+  
+  .lang-setting {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+  
+  .lang-setting label {
+    font-size: 0.75rem;
+    min-width: 120px;
+  }
+  
+  .lang-setting select {
+    flex: 1;
+    margin-left: 0.5rem;
+    font-size: 0.8rem;
+  }
+  
+  .subtitle-main {
+    padding: 1rem;
+  }
+  
+  .subtitle-display {
+    padding: 1.5rem;
+    border-radius: 12px;
+  }
+  
+  .subtitle-text {
+    font-size: 1.5rem;
+    min-height: 2rem;
+  }
+  
+  .subtitle-meta {
+    flex-direction: column;
+    gap: 0.5rem;
+    text-align: center;
+  }
+  
+  .waiting-icon {
+    font-size: 2rem;
+  }
+  
+  .waiting-message p {
+    font-size: 1rem;
+  }
+  
+  .user-footer {
+    padding: 1rem;
+  }
+  
+  .voice-btn {
+    min-width: 140px;
+    min-height: 100px;
+    padding: 1.5rem;
+  }
+  
+  .voice-icon {
+    font-size: 2rem;
+  }
+  
+  .voice-text {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  
+  .input-row {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  
+  .message-input {
+    min-height: 80px;
+    font-size: 1rem;
+  }
+  
+  .send-btn {
+    width: 100%;
+    padding: 1rem;
+    font-size: 1.1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .user-header {
+    padding: 0.75rem;
+  }
+  
+  .room-info h2 {
+    font-size: 1rem;
+  }
+  
+  .connection-status {
+    font-size: 0.8rem;
+  }
+  
+  .lang-setting label {
+    font-size: 0.7rem;
+    min-width: 100px;
+  }
+  
+  .lang-setting select {
+    font-size: 0.75rem;
+  }
+  
+  .subtitle-main {
+    padding: 0.75rem;
+  }
+  
+  .subtitle-display {
+    padding: 1rem;
+  }
+  
+  .subtitle-text {
+    font-size: 1.25rem;
+  }
+  
+  .voice-btn {
+    min-width: 120px;
+    min-height: 90px;
+    padding: 1rem;
+  }
+  
+  .voice-icon {
+    font-size: 1.8rem;
+  }
+  
+  .voice-text {
+    font-size: 0.9rem;
+  }
+  
+  .user-footer {
+    padding: 0.75rem;
+  }
 }
 </style>

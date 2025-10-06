@@ -10,6 +10,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - app-network
 
   redis:
     image: redis:7
@@ -17,6 +19,8 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - app-network
 
   backend:
     build: ./backend
@@ -24,30 +28,46 @@ services:
     depends_on:
       - db
       - redis
-    ports:
-      - "8081:8080"
+    expose:
+      - "8080"
     volumes:
       - ./backend:/app
     environment:
       - POSTGRES_URL=postgres://user:postgres@db:5432/rt
       - REDIS_URL=redis://redis:6379
     networks:
-      - default
+      - app-network
 
   frontend:
     build: ./frontend
-    ports:
-      - "5173:5173"
+    expose:
+      - "5173"
     volumes:
       - ./frontend:/app
       - /app/node_modules
     environment:
       - NODE_ENV=development
     networks:
-      - default
+      - app-network
+
+  nginx:
+    build: ./nginx
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/ssl:/etc/ssl/certs:ro
+      - ./nginx/ssl:/etc/ssl/private:ro
+    networks:
+      - app-network
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 networks:
-  default:
+  app-network:
     driver: bridge
 
 volumes:

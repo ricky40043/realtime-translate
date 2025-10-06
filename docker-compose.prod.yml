@@ -1,0 +1,45 @@
+# 生產環境配置
+# 使用方式: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  backend:
+    environment:
+      - NODE_ENV=production
+      - DEBUG=false
+      - LOG_LEVEL=info
+    restart: always
+
+  frontend:
+    environment:
+      - NODE_ENV=production
+      - VITE_API_BASE_URL=/api
+    restart: always
+
+  nginx:
+    restart: always
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/ssl/certs:ro
+      - ./nginx/ssl:/etc/ssl/private:ro
+    environment:
+      - NGINX_HOST=your-domain.com
+      - NGINX_PORT=80
+
+  db:
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./nginx/logs:/var/log/postgresql
+
+  redis:
+    restart: always
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

@@ -226,7 +226,7 @@ async function connectWebSocket() {
   disconnectWebSocket()
   
   try {
-    // 使用當前主機名和端口
+    // 使用當前頁面的協議和主機
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsHost = window.location.host
     const wsUrl = `${wsProtocol}//${wsHost}/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
@@ -580,5 +580,161 @@ function copyRoomLink() {
 .btn-secondary:hover {
   background: #667eea;
   color: white;
+}
+
+/* Mobile responsive styles */
+@media (max-width: 768px) {
+  .room-header {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  
+  .room-info {
+    text-align: center;
+    width: 100%;
+  }
+  
+  .room-info h1 {
+    font-size: 1.2rem;
+  }
+  
+  .room-actions {
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  
+  .btn-secondary {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+  }
+  
+  .room-main {
+    grid-template-rows: 1fr 250px;
+    padding: 1rem;
+    gap: 1rem;
+  }
+  
+  .board-section {
+    padding: 1rem;
+    border-radius: 0.75rem;
+  }
+  
+  .board-section h2 {
+    font-size: 1rem;
+  }
+  
+  .room-footer {
+    padding: 1rem;
+  }
+  
+  .input-controls {
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+  
+  .lang-select {
+    width: 100%;
+    padding: 0.75rem;
+    font-size: 1rem;
+  }
+  
+  .voice-mode-selector {
+    justify-content: center;
+    padding: 0.75rem;
+  }
+  
+  .voice-mode-selector label {
+    font-size: 1rem;
+  }
+  
+  .input-area {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  
+  .message-input {
+    min-height: 80px;
+    padding: 1rem;
+    font-size: 1rem;
+  }
+  
+  .send-btn {
+    width: 100%;
+    padding: 1rem;
+    font-size: 1.1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .room-header {
+    padding: 0.75rem;
+  }
+  
+  .room-info h1 {
+    font-size: 1rem;
+  }
+  
+  .connection-status {
+    font-size: 0.8rem;
+  }
+  
+  .btn-secondary {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.75rem;
+  }
+  
+  .room-main {
+    grid-template-rows: 1fr 200px;
+    padding: 0.75rem;
+    gap: 0.75rem;
+  }
+  
+  .board-section {
+    padding: 0.75rem;
+  }
+  
+  .board-section h2 {
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+  }
+  
+  .room-footer {
+    padding: 0.75rem;
+  }
+  
+  .input-controls {
+    gap: 0.5rem;
+  }
+  
+  .lang-select {
+    padding: 0.6rem;
+    font-size: 0.9rem;
+  }
+  
+  .voice-mode-selector {
+    padding: 0.6rem;
+    gap: 0.75rem;
+  }
+  
+  .voice-mode-selector label {
+    font-size: 0.85rem;
+  }
+  
+  .input-area {
+    gap: 0.5rem;
+  }
+  
+  .message-input {
+    min-height: 70px;
+    padding: 0.75rem;
+    font-size: 0.9rem;
+  }
+  
+  .send-btn {
+    padding: 0.75rem;
+    font-size: 1rem;
+  }
 }
 </style>
