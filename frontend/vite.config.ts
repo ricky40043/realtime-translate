@@ -10,6 +10,16 @@ export default defineConfig({
       '@': resolve(__dirname, 'src')
     }
   },
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    minify: 'esbuild',
+    target: 'es2015'
+  },
+  // 自定義 HTML 生成
+  define: {
+    __INJECT_SCRIPT__: '"<script src=\\"/app.js\\"></script>"'
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,
@@ -32,7 +42,7 @@ export default defineConfig({
           proxy.on('error', (err, _req, _res) => {
             console.log('proxy error', err);
           });
-          proxy.on('proxyReq', (proxyReq, req, _res) => {
+          proxy.on('proxyReq', (_proxyReq, req, _res) => {
             console.log('Sending Request to the Target:', req.method, req.url);
           });
           proxy.on('proxyRes', (proxyRes, req, _res) => {

@@ -81,6 +81,7 @@ import { speechApi } from '@/api/speech'
 interface Props {
   roomId: string
   disabled?: boolean
+  userLang?: string
 }
 
 interface Emits {

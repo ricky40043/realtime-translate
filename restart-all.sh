@@ -22,9 +22,8 @@ echo -e "${YELLOW}🛑 停止現有服務...${NC}"
 echo "  停止 ngrok..."
 pkill ngrok 2>/dev/null || true
 
-echo "  停止前端開發服務..."
-pkill -f "npm run dev" 2>/dev/null || true
-pkill -f "vite" 2>/dev/null || true
+echo "  清理前端相關進程..."
+# 前端現在完全在 Docker 中運行，不需要停止本地進程
 
 echo "  停止 Docker 服務..."
 docker-compose down
@@ -32,17 +31,27 @@ docker-compose down
 echo -e "${GREEN}✅ 所有服務已停止${NC}"
 echo ""
 
-# 啟動 Docker 服務
+# 啟動 Docker 服務（分階段啟動避免依賴問題）
 echo -e "${BLUE}🐳 啟動 Docker 服務...${NC}"
-docker-compose up --build -d
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Docker 服務啟動失敗${NC}"
-    exit 1
-fi
+echo "  第一階段：啟動基礎服務（數據庫、Redis、後端）..."
+docker-compose up --build -d db redis backend
 
-echo "  等待 Docker 服務啟動..."
+echo "  等待基礎服務啟動..."
+sleep 5
+
+echo "  第二階段：啟動前端服務..."
+docker-compose build --no-cache frontend
+docker-compose up -d frontend
+
+echo "  等待前端服務啟動..."
 sleep 8
+
+echo "  第三階段：啟動 nginx 代理..."
+docker-compose up -d nginx
+
+echo "  等待 nginx 啟動..."
+sleep 5
 
 # 檢查 Docker 服務狀態
 echo "  檢查 Docker 服務狀態:"
@@ -62,8 +71,8 @@ if docker-compose ps frontend | grep -q "Up"; then
     echo -e "${GREEN}✅ 前端 Docker 服務已啟動${NC}"
     
     # 檢查前端服務是否可訪問
-    if curl -s http://localhost:5173 > /dev/null 2>&1; then
-        echo -e "${GREEN}✅ 前端服務可正常訪問${NC}"
+    if curl -s http://localhost:5174 > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ 前端服務可正常訪問 (http://localhost:5174)${NC}"
     else
         echo -e "${YELLOW}⚠️  前端服務正在啟動中...${NC}"
         echo "  可查看容器日誌: docker-compose logs frontend"
@@ -76,7 +85,7 @@ echo ""
 
 # 啟動 ngrok
 echo -e "${BLUE}🌐 啟動 ngrok 隧道...${NC}"
-ngrok http 80 > ngrok.log 2>&1 &
+ngrok http 5174 > ngrok.log 2>&1 &
 
 echo "  等待 ngrok 隧道建立..."
 sleep 8

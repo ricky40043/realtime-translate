@@ -174,7 +174,7 @@ onMounted(async () => {
     roomId.value = routeRoomId
   } else {
     // 沒有房間 ID，建立新房間
-    await createNewRoom()
+    await createRoom()
   }
   
   // 如果未登入，先進行匿名登入
