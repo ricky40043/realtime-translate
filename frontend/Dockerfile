@@ -19,4 +19,4 @@ COPY . .
 EXPOSE 5173
 
 # 開發模式啟動，綁定到所有網路介面
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+CMD ["npm", "run", "dev"]

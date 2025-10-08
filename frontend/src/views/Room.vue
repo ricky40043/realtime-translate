@@ -204,36 +204,27 @@ watch(() => route.params.roomId, async (newRoomId) => {
 async function performGuestLogin() {
   try {
     const guestName = `訪客_${Math.random().toString(36).substr(2, 6)}`
-    const response = await authApi.guestLogin(guestName, 'zh-TW')
+    console.log(`👤 進行匿名登入: ${guestName}`)
     
-    sessionStore.setAuth(
-      {
-        id: response.user_id,
-        displayName: response.display_name,
-        preferredLang: response.preferred_lang
-      },
-      response.token
-    )
+    const response = await authApi.guestLogin(guestName, 'zh-TW', 'zh-TW', 'en')
+    
+    const userInfo = {
+      id: response.user_id,
+      displayName: response.display_name,
+      preferredLang: response.preferred_lang,
+      inputLang: response.input_lang,
+      outputLang: response.output_lang
+    }
+    
+    sessionStore.setAuth(userInfo, response.token)
+    console.log(`✅ 匿名登入成功: ${userInfo.displayName}`)
   } catch (error) {
-    console.error('Guest login failed:', error)
+    console.error('❌ 匿名登入失敗:', error)
     alert('登入失敗，請重新整理頁面')
   }
 }
 
-// 建立新房間 (通過 API)
-async function createNewRoom() {
-  try {
-    const roomName = `房間_${new Date().toLocaleString()}`
-    const response = await roomApi.createRoom(roomName, 'en')
-    roomId.value = response.id
-    
-    // 更新 URL
-    router.replace(`/room/${roomId.value}`)
-  } catch (error) {
-    console.error('Create room failed:', error)
-    alert('建立房間失敗')
-  }
-}
+// 建立新房間功能已整合到 createRoom() 函數中
 
 // 載入房間資料
 async function loadRoom() {
@@ -328,16 +319,28 @@ function handleVoiceTranscript(result: { text: string; confidence: number; lang:
 // 創建房間
 async function createRoom() {
   try {
-    // 生成 UUID 格式的房間 ID
-    const roomId = crypto.randomUUID()
+    // 先檢查是否已登入，如果沒有先進行匿名登入
+    if (!sessionStore.isAuthenticated) {
+      console.log('👤 創建房間前先進行匿名登入')
+      await performGuestLogin()
+    }
+    
+    const roomName = `測試房間_${new Date().toLocaleString()}`
+    console.log('🏠 創建新房間:', roomName)
+    
+    // 調用後端 API 創建房間
+    const response = await roomApi.createRoom(roomName, 'en')
+    console.log('✅ 房間創建成功:', response)
     
     // 跳轉到 host 頁面
-    router.push(`/host/${roomId}`)
+    router.push(`/host/${response.id}`)
   } catch (error) {
-    console.error('創建房間失敗:', error)
+    console.error('❌ 創建房間失敗:', error)
     alert('創建房間失敗，請重試')
   }
 }
+
+// 重複的匿名登入函數已刪除，使用上方現有的 performGuestLogin
 
 // 翻譯文字
 async function translateText() {

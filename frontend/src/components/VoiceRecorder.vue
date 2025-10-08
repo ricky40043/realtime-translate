@@ -43,6 +43,16 @@
       <option value="es-ES">Español</option>
       <option value="fr-FR">Français</option>
       <option value="de-DE">Deutsch</option>
+      <option value="it-IT">Italiano</option>
+      <option value="pt-PT">Português</option>
+      <option value="ru-RU">Русский</option>
+      <option value="ar-SA">العربية</option>
+      <option value="hi-IN">हिन्दी</option>
+      <option value="th-TH">ไทย</option>
+      <option value="vi-VN">Tiếng Việt</option>
+      <option value="my-MM">မြန်မာ (緬甸文)</option>
+      <option value="id-ID">Bahasa Indonesia (印尼文)</option>
+      <option value="ms-MY">Bahasa Melayu (馬來文)</option>
     </select>
     
     <!-- 錄音狀態指示器 -->

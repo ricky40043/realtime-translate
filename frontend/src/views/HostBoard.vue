@@ -182,6 +182,14 @@ watch(() => sessionStore.boardMessages.length, async () => {
   scrollToBottom()
 })
 
+// 監聽分享模態窗顯示，生成 QR Code
+watch(showShareModal, async (isShown) => {
+  if (isShown) {
+    await nextTick()
+    generateQRCode()
+  }
+})
+
 // 匿名登入
 async function performGuestLogin() {
   try {
@@ -867,6 +875,7 @@ function scrollToBottom() {
   border-radius: 8px;
   font-size: 0.9rem;
   background: #f9f9f9;
+  color: #333;
   font-family: monospace;
 }
 

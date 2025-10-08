@@ -111,6 +111,14 @@ export const useSessionStore = defineStore('session', () => {
       localStorage.setItem('user', JSON.stringify(user.value))
     }
   }
+
+  function updateUserLangs(inputLang: string, outputLang: string) {
+    if (user.value) {
+      user.value.inputLang = inputLang
+      user.value.outputLang = outputLang
+      localStorage.setItem('user', JSON.stringify(user.value))
+    }
+  }
   
   return {
     // State
@@ -135,6 +143,7 @@ export const useSessionStore = defineStore('session', () => {
     addBoardMessage,
     clearMessages,
     setWebSocket,
-    updateUserLang
+    updateUserLang,
+    updateUserLangs
   }
 })

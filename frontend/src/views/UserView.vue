@@ -21,6 +21,17 @@
             <option value="es">Español</option>
             <option value="fr">Français</option>
             <option value="de">Deutsch</option>
+            <option value="it">Italiano</option>
+            <option value="pt">Português</option>
+            <option value="ru">Русский</option>
+            <option value="ar">العربية</option>
+            <option value="hi">हिन्दी</option>
+            <option value="th">ไทย</option>
+            <option value="vi">Tiếng Việt</option>
+            <option value="my">မြန်မာ (緬甸文)</option>
+            <option value="id">Bahasa Indonesia (印尼文)</option>
+            <option value="ms">Bahasa Melayu (馬來文)</option>
+            <option value="yue">廣東話</option>
           </select>
         </div>
         <div class="lang-setting">
@@ -34,6 +45,17 @@
             <option value="es">Español</option>
             <option value="fr">Français</option>
             <option value="de">Deutsch</option>
+            <option value="it">Italiano</option>
+            <option value="pt">Português</option>
+            <option value="ru">Русский</option>
+            <option value="ar">العربية</option>
+            <option value="hi">हिन्दी</option>
+            <option value="th">ไทย</option>
+            <option value="vi">Tiếng Việt</option>
+            <option value="my">မြန်မာ (緬甸文)</option>
+            <option value="id">Bahasa Indonesia (印尼文)</option>
+            <option value="ms">Bahasa Melayu (馬來文)</option>
+            <option value="yue">廣東話</option>
           </select>
         </div>
       </div>
@@ -471,11 +493,29 @@ function cleanup() {
 
 // 載入用戶設定
 function loadUserSettings() {
-  const savedSettings = localStorage.getItem('userLanguageSettings')
-  if (savedSettings) {
-    const settings = JSON.parse(savedSettings)
-    inputLang.value = settings.inputLang || ''
-    outputLang.value = settings.outputLang || 'zh-TW'
+  // 優先使用 sessionStore 中的用戶語言設定（確保用戶隔離）
+  if (sessionStore.user?.inputLang) {
+    inputLang.value = sessionStore.user.inputLang
+    console.log(`📝 從 session 載入慣用語設定: ${inputLang.value}`)
+  }
+  if (sessionStore.user?.outputLang) {
+    outputLang.value = sessionStore.user.outputLang
+    console.log(`📝 從 session 載入主板語言設定: ${outputLang.value}`)
+  }
+  
+  // 如果 session 中沒有設定，才使用 localStorage 作為後備
+  if (!sessionStore.user?.inputLang || !sessionStore.user?.outputLang) {
+    const savedSettings = localStorage.getItem('userLanguageSettings')
+    if (savedSettings) {
+      const settings = JSON.parse(savedSettings)
+      if (!sessionStore.user?.inputLang) {
+        inputLang.value = settings.inputLang || 'zh-TW'
+      }
+      if (!sessionStore.user?.outputLang) {
+        outputLang.value = settings.outputLang || 'en'
+      }
+      console.log(`📝 從 localStorage 載入語言設定後備`)
+    }
   }
 }
 
@@ -494,6 +534,9 @@ async function updateSettings() {
       
       const result = await speechApi.updateUserLangs(inputLang.value, outputLang.value)
       console.log(`✅ 語言設定已更新: 慣用語=${result.input_lang}, 主板=${result.output_lang}`)
+      
+      // 更新本地狀態，確保不會被其他用戶影響
+      sessionStore.updateUserLangs(inputLang.value, outputLang.value)
     } catch (error) {
       console.error('❌ 更新語言設定錯誤:', error)
     }

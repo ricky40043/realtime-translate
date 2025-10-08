@@ -51,20 +51,26 @@ docker-compose ps
 echo -e "${GREEN}✅ Docker 服務已啟動${NC}"
 echo ""
 
-# 啟動前端開發服務
-echo -e "${BLUE}⚛️  啟動前端開發服務...${NC}"
-cd frontend && npm run dev > ../frontend.log 2>&1 &
-cd ..
+# 檢查前端 Docker 服務
+echo -e "${BLUE}⚛️  檢查前端 Docker 服務...${NC}"
 
-echo "  等待前端服務啟動..."
+echo "  等待前端容器完全啟動..."
 sleep 8
 
-# 檢查前端服務
-if pgrep -f "npm run dev" > /dev/null; then
-    echo -e "${GREEN}✅ 前端開發服務已啟動${NC}"
+# 檢查前端容器是否運行
+if docker-compose ps frontend | grep -q "Up"; then
+    echo -e "${GREEN}✅ 前端 Docker 服務已啟動${NC}"
+    
+    # 檢查前端服務是否可訪問
+    if curl -s http://localhost:5173 > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ 前端服務可正常訪問${NC}"
+    else
+        echo -e "${YELLOW}⚠️  前端服務正在啟動中...${NC}"
+        echo "  可查看容器日誌: docker-compose logs frontend"
+    fi
 else
-    echo -e "${RED}❌ 前端開發服務啟動失敗${NC}"
-    echo "請檢查 frontend.log 獲取錯誤信息"
+    echo -e "${RED}❌ 前端 Docker 服務啟動失敗${NC}"
+    echo "請執行 'docker-compose logs frontend' 查看錯誤信息"
 fi
 echo ""
 
@@ -105,10 +111,10 @@ fi
 echo ""
 echo -e "${BLUE}📋 服務狀態總結:${NC}"
 echo "  Docker: $(docker-compose ps --services | wc -l | tr -d ' ') 個服務運行中"
-echo "  前端: $(pgrep -f "npm run dev" > /dev/null && echo "✅ 運行中" || echo "❌ 未運行")"
+echo "  前端: $(docker-compose ps frontend | grep -q "Up" && echo "✅ Docker容器運行中" || echo "❌ Docker容器未運行")"
 echo "  ngrok: $(pgrep -f "ngrok" > /dev/null && echo "✅ 運行中" || echo "❌ 未運行")"
 echo ""
 echo -e "${YELLOW}💡 如有問題，請檢查日誌文件:${NC}"
-echo "  frontend.log - 前端服務日誌"
+echo "  docker-compose logs frontend - 前端服務日誌"
 echo "  ngrok.log - ngrok 日誌"
-echo "  docker-compose logs - Docker 服務日誌"
+echo "  docker-compose logs - 所有 Docker 服務日誌"
