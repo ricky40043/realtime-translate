@@ -155,8 +155,8 @@ onMounted(async () => {
   // 載入認證資料
   sessionStore.loadAuth()
   
-  // 處理房間 ID
-  const routeRoomId = route.params.roomId as string
+  // 處理房間 ID (從查詢參數獲取)
+  const routeRoomId = route.query.roomId as string
   if (!routeRoomId) {
     alert('無效的房間連結')
     router.push('/')
@@ -568,6 +568,7 @@ function formatTimestamp(timestamp: string | null) {
   display: flex;
   flex-direction: column;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  overflow: hidden;
 }
 
 .user-header {
@@ -807,10 +808,17 @@ function formatTimestamp(timestamp: string | null) {
 
 /* Mobile responsive styles */
 @media (max-width: 768px) {
+  .user-view-container {
+    height: 100vh;
+    height: 100dvh; /* 使用動態視窗高度，避免手機瀏覽器地址欄問題 */
+    overflow: hidden;
+  }
+  
   .user-header {
     flex-direction: column;
     gap: 1rem;
     padding: 1rem;
+    flex-shrink: 0;
   }
   
   .room-info {

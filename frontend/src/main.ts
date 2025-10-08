@@ -17,7 +17,7 @@ const router = createRouter({
     { path: '/', redirect: '/room' },
     { path: '/room/:roomId?', component: Room, name: 'room' },
     { path: '/host/:roomId', component: HostBoard, name: 'host' },
-    { path: '/user/:roomId', component: UserView, name: 'user' },
+    { path: '/user', component: UserView, name: 'user' },
     { path: '/settings', component: Settings, name: 'settings' }
   ]
 })

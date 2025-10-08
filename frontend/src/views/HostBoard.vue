@@ -147,7 +147,7 @@ onMounted(async () => {
   const routeRoomId = route.params.roomId as string
   if (routeRoomId) {
     roomId.value = routeRoomId
-    userUrl.value = `${window.location.origin}/user/${routeRoomId}`
+    userUrl.value = `${window.location.origin}/user?roomId=${routeRoomId}`
   } else {
     // 沒有房間 ID，建立新房間
     await createNewRoom()
@@ -389,7 +389,8 @@ async function generateQRCode() {
   if (!qrCanvas.value) return
   
   try {
-    await QRCode.toCanvas(qrCanvas.value, userUrl.value, {
+    const url = `${window.location.origin}/user?roomId=${roomId.value}`
+    await QRCode.toCanvas(qrCanvas.value, url, {
       width: 200,
       margin: 2,
       color: {
@@ -397,6 +398,7 @@ async function generateQRCode() {
         light: '#FFFFFF'
       }
     })
+    console.log('QR Code generated for:', url)
   } catch (error) {
     console.error('生成 QR Code 失敗:', error)
   }
@@ -431,7 +433,7 @@ async function copyUrl() {
 
 // 複製用戶連結
 function copyUserLink() {
-  const url = `${window.location.origin}/user/${roomId.value}`
+  const url = `${window.location.origin}/user?roomId=${roomId.value}`
   navigator.clipboard.writeText(url).then(() => {
     alert('用戶參與連結已複製到剪貼簿')
   }).catch(() => {
@@ -598,9 +600,10 @@ function scrollToBottom() {
 }
 
 .message-content {
-  font-size: 1.1rem;
-  line-height: 1.4;
+  font-size: 1.4rem;
+  line-height: 1.5;
   color: #333;
+  font-weight: 500;
 }
 
 /* 滾動條樣式 */
@@ -767,7 +770,7 @@ function scrollToBottom() {
   }
   
   .message-content {
-    font-size: 0.9rem;
+    font-size: 1.2rem;
   }
   
   .debug-panel {
