@@ -163,7 +163,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  cleanup()
+  fullCleanup()
 })
 
 function checkSupport() {
@@ -457,10 +457,8 @@ function formatTime(seconds: number): string {
 }
 
 function cleanup() {
-  if (stream.value) {
-    stream.value.getTracks().forEach(track => track.stop())
-    stream.value = null
-  }
+  // 不要停止音頻軌道，保持麥克風權限活躍
+  // 只清理錄音相關的資源
   
   if (recordingTimer.value) {
     clearInterval(recordingTimer.value)
@@ -470,6 +468,15 @@ function cleanup() {
   stopVolumeAnalysis()
   audioChunks.value = []
   recordingTime.value = 0
+}
+
+// 完全清理資源（僅在組件卸載時調用）
+function fullCleanup() {
+  if (stream.value) {
+    stream.value.getTracks().forEach(track => track.stop())
+    stream.value = null
+  }
+  cleanup()
 }
 </script>
 

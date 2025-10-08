@@ -90,19 +90,15 @@
         <!-- 語音輸入按鈕 -->
         <div class="voice-input-container">
           <button 
-            @mousedown="startRecording" 
-            @mouseup="stopRecording"
-            @mouseleave="stopRecording"
-            @touchstart="startRecording"
-            @touchend="stopRecording"
+            @click="toggleRecording"
             :class="['voice-btn', { recording: isRecording }]"
             :disabled="!sessionStore.isConnected || isProcessing"
           >
             <span class="voice-icon">🎤</span>
             <span class="voice-text">{{ 
               isProcessing ? '處理中...' : 
-              isRecording ? '錄音中...' : 
-              '按住說話' 
+              isRecording ? '點擊送出' : 
+              '點擊錄音' 
             }}</span>
           </button>
         </div>
@@ -110,7 +106,7 @@
         <!-- 語音提示 -->
         <div class="voice-tips">
           <p>🎤 純語音模式</p>
-          <p>按住按鈕說話，釋放後自動翻譯</p>
+          <p>點擊開始錄音，再點擊送出翻譯</p>
         </div>
       </div>
     </footer>
@@ -182,7 +178,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disconnectWebSocket()
-  cleanup()
+  fullCleanup()
 })
 
 // 監聽房間變化
@@ -346,6 +342,15 @@ function handleWebSocketMessage(message: any) {
 
 // 文字輸入功能已移除，純語音模式
 
+// 切換錄音狀態
+async function toggleRecording() {
+  if (isRecording.value) {
+    stopRecording()
+  } else {
+    await startRecording()
+  }
+}
+
 // 開始錄音
 async function startRecording() {
   if (!sessionStore.isConnected || isProcessing.value) return
@@ -483,12 +488,19 @@ function getFileExtension(): string {
 
 // 清理資源
 function cleanup() {
+  // 不要停止音頻軌道，保持麥克風權限活躍
+  // 只清理錄音相關的資源
+  mediaRecorder.value = null
+  audioChunks.value = []
+}
+
+// 完全清理資源（僅在組件卸載時調用）
+function fullCleanup() {
   if (stream.value) {
     stream.value.getTracks().forEach(track => track.stop())
     stream.value = null
   }
-  mediaRecorder.value = null
-  audioChunks.value = []
+  cleanup()
 }
 
 // 載入用戶設定
@@ -623,7 +635,7 @@ function formatTimestamp(timestamp: string | null) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem;
+  padding: 1rem;
 }
 
 .subtitle-display {
@@ -631,7 +643,7 @@ function formatTimestamp(timestamp: string | null) {
   max-width: 800px;
   background: rgba(255, 255, 255, 0.95);
   border-radius: 16px;
-  padding: 3rem;
+  padding: 2rem;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
   text-align: center;
 }
@@ -702,7 +714,7 @@ function formatTimestamp(timestamp: string | null) {
 }
 
 .user-footer {
-  padding: 2rem;
+  padding: 1.5rem;
   background: rgba(255, 255, 255, 0.9);
 }
 
@@ -712,7 +724,7 @@ function formatTimestamp(timestamp: string | null) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 .voice-input-container {
@@ -749,7 +761,11 @@ function formatTimestamp(timestamp: string | null) {
 }
 
 .voice-btn.recording {
-  background: #dc3545;
+  background: linear-gradient(135deg, #ff4444, #cc0000);
+  color: white;
+  transform: scale(1.1);
+  box-shadow: 0 0 20px rgba(255, 68, 68, 0.7);
+  border: 3px solid #ff0000;
   animation: pulse 1s infinite;
 }
 
