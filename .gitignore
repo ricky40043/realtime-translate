@@ -71,7 +71,7 @@ tmp_*
 
 # Google Cloud 憑證
 service-account.json
-*.json
+# *.json
 
 # IDE 設定
 .vscode/
