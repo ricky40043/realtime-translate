@@ -1,8 +1,6 @@
 // API 基礎地址配置
-// 使用 nginx 代理時，API 路徑為 /api
-// 開發環境可以通過環境變數覆蓋
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 
-  (import.meta.env.PROD ? '/api' : `http://${window.location.hostname}:8081/api`)
+// 使用相對路徑 /api，通過 Vite 代理到後端
+const API_BASE = '/api'
 
 console.log('🔗 API_BASE:', API_BASE)
 

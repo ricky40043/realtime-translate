@@ -105,6 +105,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { speechStagedApi } from '@/api/speech'
 
 interface Props {
   roomId: string
@@ -285,20 +286,7 @@ async function uploadForSTT(audioBlob: Blob) {
     throw new Error('未登入')
   }
   
-  const response = await fetch('http://localhost:8081/api/speech-staged/stt-only', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`
-    },
-    body: formData
-  })
-  
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`STT 失敗: ${response.status} ${errorText}`)
-  }
-  
-  const result = await response.json()
+  const result = await speechStagedApi.sttOnly(props.roomId, audioBlob, selectedLang.value)
   console.log('✅ 步驟 1 完成 - 語音辨識:', result)
   
   return result
@@ -324,31 +312,10 @@ async function confirmAndTranslate() {
     isProcessing.value = true
     console.log('🔄 步驟 2: 文字翻譯...')
     
-    const token = localStorage.getItem('token')
-    if (!token) {
-      throw new Error('未登入')
-    }
-    
-    const response = await fetch('http://localhost:8081/api/speech-staged/translate-stt', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        transcript_id: transcriptResult.value.transcript_id,
-        room_id: props.roomId,
-        confirmed_text: editableTranscript.value.trim(),
-        source_lang: transcriptResult.value.detected_lang
-      })
-    })
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`翻譯失敗: ${response.status} ${errorText}`)
-    }
-    
-    const result = await response.json()
+    const result = await speechStagedApi.translateStt(
+      transcriptResult.value.transcript_id,
+      props.roomId
+    )
     console.log('✅ 步驟 2 完成 - 翻譯處理:', result)
     
     // 發送翻譯開始事件
@@ -371,14 +338,8 @@ async function confirmAndTranslate() {
 
 async function cancelTranscript() {
   try {
-    const token = localStorage.getItem('token')
-    if (token && transcriptResult.value.transcript_id) {
-      await fetch(`http://localhost:8081/api/speech-staged/transcript/${transcriptResult.value.transcript_id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
+    if (transcriptResult.value.transcript_id) {
+      await speechStagedApi.deleteTranscript(transcriptResult.value.transcript_id)
     }
   } catch (err) {
     console.warn('取消 STT 結果失敗:', err)

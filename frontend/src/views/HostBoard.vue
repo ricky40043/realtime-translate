@@ -14,14 +14,14 @@
         </div>
       </div>
       <div class="room-actions">
+        <button @click="showShareModal = true" class="btn-primary">
+          📱 分享房間
+        </button>
+        <button @click="copyUserLink" class="btn-secondary">
+          複製連結
+        </button>
         <button @click="$router.push('/settings')" class="btn-secondary">
           設定
-        </button>
-        <button @click="copyRoomLink" class="btn-secondary">
-          分享房間
-        </button>
-        <button @click="copyUserLink" class="btn-primary">
-          分享用戶連結
         </button>
         <button @click="showDebug = !showDebug" class="btn-secondary">
           {{ showDebug ? '隱藏除錯' : '顯示除錯' }}
@@ -60,6 +60,52 @@
         </div>
       </div>
     </main>
+
+    <!-- 分享房間模態窗 -->
+    <div v-if="showShareModal" class="modal-overlay" @click="closeModal">
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h2>📱 分享房間</h2>
+          <button @click="closeModal" class="close-btn">✕</button>
+        </div>
+        
+        <div class="modal-body">
+          <!-- QR Code 區域 -->
+          <div class="qr-section">
+            <h3>掃描 QR Code 加入房間</h3>
+            <div class="qr-container">
+              <canvas ref="qrCanvas" class="qr-code"></canvas>
+            </div>
+          </div>
+          
+          <!-- 短網址區域 -->
+          <div class="url-section">
+            <h3>或使用連結加入</h3>
+            <div class="url-container">
+              <input 
+                ref="urlInput"
+                :value="userUrl" 
+                readonly 
+                class="url-input"
+              />
+              <button @click="copyUrl" class="copy-btn">
+                {{ urlCopied ? '✅ 已複製' : '📋 複製' }}
+              </button>
+            </div>
+          </div>
+          
+          <!-- 使用說明 -->
+          <div class="instructions">
+            <p>👥 邀請其他人：</p>
+            <ul>
+              <li>📱 手機用戶可掃描 QR Code</li>
+              <li>💻 電腦用戶可複製連結</li>
+              <li>🎤 加入後即可開始語音翻譯</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -68,6 +114,7 @@ import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSessionStore } from '../stores/session'
 import { authApi, roomApi } from '../api/http'
+import QRCode from 'qrcode'
 
 const route = useRoute()
 const router = useRouter()
@@ -84,6 +131,13 @@ const debugMessages = ref<DebugEntry[]>([])
 // 房間 ID
 const roomId = ref<string>('')
 
+// 分享功能相關
+const showShareModal = ref(false)
+const qrCanvas = ref<HTMLCanvasElement>()
+const urlInput = ref<HTMLInputElement>()
+const urlCopied = ref(false)
+const userUrl = ref('')
+
 // 初始化
 onMounted(async () => {
   // 載入認證資料
@@ -93,6 +147,7 @@ onMounted(async () => {
   const routeRoomId = route.params.roomId as string
   if (routeRoomId) {
     roomId.value = routeRoomId
+    userUrl.value = `${window.location.origin}/user/${routeRoomId}`
   } else {
     // 沒有房間 ID，建立新房間
     await createNewRoom()
@@ -319,6 +374,51 @@ function copyRoomLink() {
   }).catch(() => {
     alert(`主板房間連結：${url}`)
   })
+}
+
+// 分享功能
+async function generateQRCode() {
+  if (!qrCanvas.value) return
+  
+  try {
+    await QRCode.toCanvas(qrCanvas.value, userUrl.value, {
+      width: 200,
+      margin: 2,
+      color: {
+        dark: '#000000',
+        light: '#FFFFFF'
+      }
+    })
+  } catch (error) {
+    console.error('生成 QR Code 失敗:', error)
+  }
+}
+
+// 關閉模態窗
+function closeModal() {
+  showShareModal.value = false
+  urlCopied.value = false
+}
+
+// 複製網址
+async function copyUrl() {
+  try {
+    await navigator.clipboard.writeText(userUrl.value)
+    urlCopied.value = true
+    setTimeout(() => {
+      urlCopied.value = false
+    }, 2000)
+  } catch (error) {
+    // 備用方案
+    if (urlInput.value) {
+      urlInput.value.select()
+      document.execCommand('copy')
+      urlCopied.value = true
+      setTimeout(() => {
+        urlCopied.value = false
+      }, 2000)
+    }
+  }
 }
 
 // 複製用戶連結
@@ -669,6 +769,183 @@ function scrollToBottom() {
   
   .debug-json {
     font-size: 0.75rem;
+  }
+}
+
+/* 分享模態窗樣式 */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 16px;
+  padding: 0;
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid #eee;
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: #333;
+  font-size: 1.5rem;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #666;
+  padding: 0.5rem;
+  border-radius: 50%;
+  transition: all 0.3s;
+}
+
+.close-btn:hover {
+  background: #f5f5f5;
+  color: #333;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.qr-section, .url-section {
+  margin-bottom: 2rem;
+}
+
+.qr-section h3, .url-section h3 {
+  margin: 0 0 1rem 0;
+  color: #333;
+  font-size: 1.1rem;
+}
+
+.qr-container {
+  text-align: center;
+  padding: 1rem;
+  background: #f9f9f9;
+  border-radius: 12px;
+  border: 2px dashed #ddd;
+}
+
+.qr-code {
+  max-width: 100%;
+  height: auto;
+}
+
+.url-container {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.url-input {
+  flex: 1;
+  padding: 0.75rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  background: #f9f9f9;
+  font-family: monospace;
+}
+
+.copy-btn {
+  padding: 0.75rem 1rem;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.3s;
+  white-space: nowrap;
+}
+
+.copy-btn:hover {
+  background: #0056b3;
+}
+
+.instructions {
+  background: #f0f7ff;
+  padding: 1rem;
+  border-radius: 8px;
+  border-left: 4px solid #007bff;
+}
+
+.instructions p {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+  color: #333;
+}
+
+.instructions ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.instructions li {
+  margin: 0.25rem 0;
+  color: #666;
+}
+
+/* 手機版分享模態窗 */
+@media (max-width: 768px) {
+  .modal-content {
+    width: 95%;
+    max-height: 90vh;
+  }
+  
+  .modal-header {
+    padding: 1rem;
+  }
+  
+  .modal-header h2 {
+    font-size: 1.2rem;
+  }
+  
+  .modal-body {
+    padding: 1rem;
+  }
+  
+  .url-container {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .url-input {
+    width: 100%;
+    font-size: 0.8rem;
+  }
+  
+  .copy-btn {
+    width: 100%;
+    padding: 1rem;
+  }
+  
+  .qr-container {
+    padding: 0.5rem;
   }
 }
 </style>

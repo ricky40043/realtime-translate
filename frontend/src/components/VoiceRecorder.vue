@@ -66,6 +66,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { speechApi } from '@/api/speech'
 
 interface Props {
   roomId: string
@@ -232,20 +233,7 @@ async function uploadAudio(audioBlob: Blob) {
     throw new Error('未登入')
   }
   
-  const response = await fetch('http://localhost:8081/api/speech/upload', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`
-    },
-    body: formData
-  })
-  
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`STT 失敗: ${response.status} ${errorText}`)
-  }
-  
-  const result = await response.json()
+  const result = await speechApi.upload(props.roomId, audioBlob, props.userLang)
   console.log('✅ STT 成功:', result)
   
   // 發送轉錄結果

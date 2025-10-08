@@ -3,40 +3,80 @@
     <!-- 頂部導航 -->
     <header class="room-header">
       <div class="room-info">
-        <h1 v-if="sessionStore.currentRoom">{{ sessionStore.currentRoom.name }}</h1>
-        <h1 v-else>載入中...</h1>
-        <div class="connection-status">
-          <span :class="['status-dot', { connected: sessionStore.isConnected }]"></span>
-          {{ sessionStore.isConnected ? '已連線' : '連線中...' }}
+        <h1>🌍 多語言即時翻譯測試</h1>
+        <div class="subtitle">
+          使用語音或文字進行多語言翻譯測試
         </div>
       </div>
       <div class="room-actions">
-        <button @click="$router.push('/settings')" class="btn-secondary">
-          設定
-        </button>
-        <button @click="copyRoomLink" class="btn-secondary">
-          分享房間
+        <button @click="createRoom" class="btn-primary">
+          🚀 創建房間
         </button>
       </div>
     </header>
 
     <!-- 主要內容區域 -->
     <main class="room-main">
-      <!-- 個人字幕區域 -->
-      <section class="subtitle-section">
-        <BigSubtitle 
-          :subtitle="sessionStore.currentSubtitle"
-          :user-lang="sessionStore.user?.preferredLang || 'zh-TW'"
-        />
-      </section>
-
-      <!-- 主板訊息流 -->
-      <section class="board-section">
-        <h2>主板訊息</h2>
-        <BoardFeed 
-          :messages="sessionStore.boardMessages"
-          :board-lang="sessionStore.currentRoom?.defaultBoardLang || 'en'"
-        />
+      <!-- 翻譯測試區域 -->
+      <section class="translation-test-section">
+        <div class="test-container">
+          <h2>🎤 語音翻譯測試</h2>
+          <div class="test-description">
+            選擇源語言和目標語言，使用語音或文字進行翻譯測試
+          </div>
+          
+          <!-- 語言選擇 -->
+          <div class="language-selector">
+            <div class="lang-group">
+              <label>源語言:</label>
+              <select v-model="sourceLang" class="lang-select">
+                <option value="">自動偵測</option>
+                <option value="zh-TW">繁體中文</option>
+                <option value="zh-CN">簡體中文</option>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="de">Deutsch</option>
+                <option value="my">မြန်မာ (緬甸文)</option>
+                <option value="id">Bahasa Indonesia (印尼文)</option>
+                <option value="ms">Bahasa Melayu (馬來文)</option>
+                <option value="yue">廣東話</option>
+              </select>
+            </div>
+            <div class="arrow">→</div>
+            <div class="lang-group">
+              <label>目標語言:</label>
+              <select v-model="targetLang" class="lang-select">
+                <option value="zh-TW">繁體中文</option>
+                <option value="zh-CN">簡體中文</option>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="de">Deutsch</option>
+                <option value="my">မြန်မာ (緬甸文)</option>
+                <option value="id">Bahasa Indonesia (印尼文)</option>
+                <option value="ms">Bahasa Melayu (馬來文)</option>
+                <option value="yue">廣東話</option>
+              </select>
+            </div>
+          </div>
+          
+          <!-- 翻譯結果顯示 -->
+          <div class="translation-result" v-if="translationResult">
+            <div class="source-text">
+              <strong>原文 ({{ getLanguageName(translationResult.sourceLang) }}):</strong>
+              <p>{{ translationResult.sourceText }}</p>
+            </div>
+            <div class="target-text">
+              <strong>翻譯 ({{ getLanguageName(translationResult.targetLang) }}):</strong>
+              <p>{{ translationResult.translatedText }}</p>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -44,18 +84,6 @@
     <footer class="room-footer">
       <div class="input-section">
         <div class="input-controls">
-          <select v-model="inputLang" class="lang-select">
-            <option value="">自動偵測</option>
-            <option value="zh-TW">繁體中文</option>
-            <option value="zh-CN">簡體中文</option>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-            <option value="de">Deutsch</option>
-          </select>
-          
           <!-- 語音模式選擇 -->
           <div class="voice-mode-selector">
             <label>
@@ -68,37 +96,36 @@
             </label>
           </div>
           
-          <!-- 直接語音錄音組件 -->
-          <VoiceRecorder 
-            v-if="roomId && voiceMode === 'direct'"
-            :room-id="roomId"
-            @transcript="handleVoiceTranscript"
-            @error="handleVoiceError"
-          />
-          
-          <!-- 分段語音錄音組件 -->
-          <VoiceRecorderStaged
-            v-if="roomId && voiceMode === 'staged'"
-            :room-id="roomId"
-            @stt-preview="handleSTTPreview"
-            @translation-start="handleTranslationStart"
-            @error="handleVoiceError"
-          />
+          <!-- 語音錄音組件 (測試模式) -->
+          <div class="voice-recorder-container">
+            <button 
+              @mousedown="startRecording" 
+              @mouseup="stopRecording"
+              @touchstart="startRecording"
+              @touchend="stopRecording"
+              :disabled="isRecording"
+              class="voice-test-btn"
+            >
+              <span class="voice-icon">{{ isRecording ? '🔴' : '🎤' }}</span>
+              <span class="voice-text">{{ isRecording ? '錄音中...' : '按住說話' }}</span>
+            </button>
+          </div>
         </div>
+        
         <div class="input-area">
           <textarea
             v-model="inputText"
             @keydown="handleKeydown"
-            placeholder="輸入訊息或使用麥克風..."
+            placeholder="輸入文字進行翻譯測試..."
             class="message-input"
             rows="2"
           ></textarea>
           <button 
-            @click="sendMessage"
+            @click="translateText"
             :disabled="!inputText.trim()"
-            class="send-btn"
+            class="translate-btn"
           >
-            發送
+            翻譯
           </button>
         </div>
       </div>
@@ -122,9 +149,16 @@ const sessionStore = useSessionStore()
 
 // 響應式數據
 const inputText = ref('')
-const inputLang = ref('')
-const voiceMode = ref('staged') // 'direct' 或 'staged'
-const ws = ref<WebSocket | null>(null)
+const sourceLang = ref('')
+const targetLang = ref('zh-TW')
+const voiceMode = ref('direct')
+const isRecording = ref(false)
+const translationResult = ref<{
+  sourceText: string
+  translatedText: string
+  sourceLang: string
+  targetLang: string
+} | null>(null)
 
 // 房間 ID
 const roomId = ref<string>('')
@@ -154,7 +188,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  disconnectWebSocket()
+  // 翻譯測試頁面無需清理
 })
 
 // 監聽房間變化
@@ -186,7 +220,7 @@ async function performGuestLogin() {
   }
 }
 
-// 建立新房間
+// 建立新房間 (通過 API)
 async function createNewRoom() {
   try {
     const roomName = `房間_${new Date().toLocaleString()}`
@@ -223,57 +257,20 @@ async function loadRoom() {
 async function connectWebSocket() {
   if (!sessionStore.user || !roomId.value) return
   
-  disconnectWebSocket()
+  // WebSocket 功能已移除
   
   try {
     // 使用當前頁面的協議和主機
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsHost = window.location.host
     const wsUrl = `${wsProtocol}//${wsHost}/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
-    ws.value = new WebSocket(wsUrl)
-    
-    ws.value.onopen = () => {
-      console.log('WebSocket connected')
-      sessionStore.setWebSocket(ws.value)
-    }
-    
-    ws.value.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data)
-        handleWebSocketMessage(message)
-      } catch (error) {
-        console.error('Parse WebSocket message failed:', error)
-      }
-    }
-    
-    ws.value.onclose = () => {
-      console.log('WebSocket disconnected')
-      sessionStore.setWebSocket(null)
-      
-      // 自動重連
-      setTimeout(() => {
-        if (roomId.value && sessionStore.user) {
-          connectWebSocket()
-        }
-      }, 3000)
-    }
-    
-    ws.value.onerror = (error) => {
-      console.error('WebSocket error:', error)
-    }
+    // WebSocket 功能已移除，翻譯測試頁面不需要
   } catch (error) {
     console.error('Connect WebSocket failed:', error)
   }
 }
 
-// 斷開 WebSocket
-function disconnectWebSocket() {
-  if (ws.value) {
-    ws.value.close()
-    ws.value = null
-    sessionStore.setWebSocket(null)
-  }
-}
+// WebSocket 功能已移除
 
 // 處理 WebSocket 訊息
 function handleWebSocketMessage(message: any) {
@@ -313,83 +310,104 @@ function handleWebSocketMessage(message: any) {
   }
 }
 
-// 發送訊息
-async function sendMessage() {
-  if (!inputText.value.trim() || !roomId.value) return
-  
-  try {
-    await ingestApi.sendText(
-      roomId.value,
-      inputText.value.trim(),
-      inputLang.value || undefined,
-      true
-    )
-    
-    inputText.value = ''
-  } catch (error) {
-    console.error('Send message failed:', error)
-    alert('發送訊息失敗')
-  }
-}
 
-// 處理鍵盤事件
-function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault()
-    sendMessage()
-  }
-}
 
-// 處理語音轉錄結果
+// 處理語音轉錄結果 (測試模式用)
 function handleVoiceTranscript(result: { text: string; confidence: number; lang: string }) {
   console.log('🎤 語音轉錄結果:', result)
   
   // 將轉錄文字填入輸入框
   inputText.value = result.text
   
-  // 如果信心度夠高，自動發送
-  if (result.confidence > 0.8) {
-    setTimeout(() => {
-      sendMessage()
-    }, 500) // 短暫延遲讓用戶看到文字
-  } else {
-    // 信心度較低時提示用戶確認
-    console.log(`⚠️ 語音識別信心度較低 (${result.confidence})，請確認文字內容`)
+  // 自動觸發翻譯
+  setTimeout(() => {
+    translateText()
+  }, 500)
+}
+
+// 創建房間
+async function createRoom() {
+  try {
+    // 生成 UUID 格式的房間 ID
+    const roomId = crypto.randomUUID()
+    
+    // 跳轉到 host 頁面
+    router.push(`/host/${roomId}`)
+  } catch (error) {
+    console.error('創建房間失敗:', error)
+    alert('創建房間失敗，請重試')
   }
 }
 
-// 處理語音錯誤
-function handleVoiceError(error: string) {
-  console.error('🎤 語音輸入錯誤:', error)
-  alert(`語音輸入錯誤: ${error}`)
-}
-
-// 處理 STT 預覽（分段語音第一步）
-function handleSTTPreview(result: { transcript: string; confidence: number; detectedLang: string }) {
-  console.log('🎤 STT 預覽結果:', result)
+// 翻譯文字
+async function translateText() {
+  if (!inputText.value.trim()) return
   
-  // 可以在這裡顯示 STT 預覽通知
-  if (result.confidence < 0.7) {
-    console.warn(`⚠️ 語音識別信心度較低 (${Math.round(result.confidence * 100)}%)，請確認文字內容`)
+  try {
+    // 模擬翻譯 API 調用
+    console.log('翻譯文字:', {
+      text: inputText.value,
+      from: sourceLang.value || 'auto',
+      to: targetLang.value
+    })
+    
+    // 這裡應該調用實際的翻譯 API
+    // 暫時使用模擬數據
+    translationResult.value = {
+      sourceText: inputText.value,
+      translatedText: `[翻譯結果] ${inputText.value}`,
+      sourceLang: sourceLang.value || 'auto',
+      targetLang: targetLang.value
+    }
+    
+    // 清空輸入框
+    inputText.value = ''
+  } catch (error) {
+    console.error('翻譯失敗:', error)
+    alert('翻譯失敗，請重試')
   }
 }
 
-// 處理翻譯開始（分段語音第二步）
-function handleTranslationStart(data: { messageId: string; finalText: string; sourceLang: string }) {
-  console.log('🔄 翻譯處理開始:', data)
-  
-  // 顯示處理中的狀態
-  console.log(`正在翻譯: "${data.finalText}" (${data.sourceLang})`)
+// 開始錄音
+function startRecording() {
+  isRecording.value = true
+  console.log('開始錄音...')
+  // 這裡會實現語音識別功能
 }
 
-// 複製房間連結
-function copyRoomLink() {
-  const url = `${window.location.origin}/room/${roomId.value}`
-  navigator.clipboard.writeText(url).then(() => {
-    alert('房間連結已複製到剪貼簿')
-  }).catch(() => {
-    alert(`房間連結：${url}`)
-  })
+// 停止錄音
+function stopRecording() {
+  isRecording.value = false
+  console.log('停止錄音')
+  // 這裡會處理錄音結果
+}
+
+// 獲取語言名稱
+function getLanguageName(langCode: string): string {
+  const langMap: Record<string, string> = {
+    'zh-TW': '繁體中文',
+    'zh-CN': '簡體中文',
+    'en': 'English',
+    'ja': '日本語',
+    'ko': '한국어',
+    'es': 'Español',
+    'fr': 'Français',
+    'de': 'Deutsch',
+    'my': 'မြန်မာ (緬甸文)',
+    'id': 'Bahasa Indonesia (印尼文)',
+    'ms': 'Bahasa Melayu (馬來文)',
+    'yue': '廣東話',
+    'auto': '自動偵測'
+  }
+  return langMap[langCode] || langCode
+}
+
+// 處理鍵盤事件
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
+    translateText()
+  }
 }
 </script>
 
@@ -445,17 +463,87 @@ function copyRoomLink() {
 
 .room-main {
   flex: 1;
-  display: grid;
-  grid-template-rows: 1fr 300px;
-  gap: 2rem;
-  padding: 2rem;
-  overflow: hidden;
-}
-
-.subtitle-section {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 2rem;
+}
+
+.translation-test-section {
+  width: 100%;
+  max-width: 800px;
+}
+
+.test-container {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 16px;
+  padding: 2rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.test-container h2 {
+  margin: 0 0 1rem 0;
+  color: #333;
+  font-size: 1.8rem;
+}
+
+.test-description {
+  color: #666;
+  margin-bottom: 2rem;
+  font-size: 1rem;
+}
+
+.language-selector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.lang-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 200px;
+}
+
+.lang-group label {
+  font-weight: 600;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.arrow {
+  font-size: 1.5rem;
+  color: #667eea;
+  font-weight: bold;
+}
+
+.translation-result {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-top: 2rem;
+  text-align: left;
+}
+
+.source-text, .target-text {
+  margin-bottom: 1rem;
+}
+
+.source-text p, .target-text p {
+  margin: 0.5rem 0 0 0;
+  padding: 1rem;
+  background: white;
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+}
+
+.target-text p {
+  border-left-color: #28a745;
 }
 
 .board-section {
@@ -546,15 +634,88 @@ function copyRoomLink() {
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
-.send-btn {
+.translate-btn {
   padding: 0.75rem 1.5rem;
-  background: #667eea;
+  background: #28a745;
   color: white;
   border: none;
   border-radius: 0.5rem;
   cursor: pointer;
   font-weight: 500;
   transition: background-color 0.3s;
+}
+
+.translate-btn:hover:not(:disabled) {
+  background: #218838;
+}
+
+.translate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  padding: 0.75rem 1.5rem;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background-color 0.3s;
+  font-size: 1rem;
+}
+
+.btn-primary:hover {
+  background: #0056b3;
+}
+
+.voice-test-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 2rem;
+  border: none;
+  border-radius: 50px;
+  background: #28a745;
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s;
+  user-select: none;
+  min-width: 120px;
+  min-height: 80px;
+}
+
+.voice-test-btn:hover:not(:disabled) {
+  background: #218838;
+  transform: scale(1.05);
+}
+
+.voice-test-btn:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.voice-test-btn.recording {
+  background: #dc3545;
+  animation: pulse 1s infinite;
+}
+
+.voice-icon {
+  font-size: 1.5rem;
+}
+
+.voice-text {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.subtitle {
+  color: #666;
+  font-size: 1rem;
+  margin-top: 0.5rem;
 }
 
 .send-btn:hover:not(:disabled) {

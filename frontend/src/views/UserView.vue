@@ -62,11 +62,11 @@
       </div>
     </main>
 
-    <!-- 底部輸入區域 -->
+    <!-- 底部語音輸入區域 -->
     <footer class="user-footer">
-      <div class="input-section">
+      <div class="voice-section">
         <!-- 語音輸入按鈕 -->
-        <div class="voice-input">
+        <div class="voice-input-container">
           <button 
             @mousedown="startRecording" 
             @mouseup="stopRecording"
@@ -85,25 +85,10 @@
           </button>
         </div>
         
-        <!-- 文字輸入 -->
-        <div class="text-input">
-          <div class="input-row">
-            <textarea
-              v-model="inputText"
-              @keydown="handleKeydown"
-              placeholder="輸入訊息..."
-              class="message-input"
-              rows="2"
-              :disabled="!sessionStore.isConnected"
-            ></textarea>
-            <button 
-              @click="sendMessage"
-              :disabled="!inputText.trim() || !sessionStore.isConnected"
-              class="send-btn"
-            >
-              發送
-            </button>
-          </div>
+        <!-- 語音提示 -->
+        <div class="voice-tips">
+          <p>🎤 純語音模式</p>
+          <p>按住按鈕說話，釋放後自動翻譯</p>
         </div>
       </div>
     </footer>
@@ -115,6 +100,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSessionStore } from '../stores/session'
 import { authApi, roomApi, ingestApi } from '../api/http'
+import { speechApi } from '../api/speech'
 import type { Message } from '../stores/session'
 
 const route = useRoute()
@@ -122,7 +108,6 @@ const router = useRouter()
 const sessionStore = useSessionStore()
 
 // 響應式數據
-const inputText = ref('')
 const inputLang = ref('zh-TW')  // 我的慣用語(個人字幕語言)
 const outputLang = ref('en')    // 主板顯示語言
 const isRecording = ref(false)
@@ -337,32 +322,7 @@ function handleWebSocketMessage(message: any) {
   }
 }
 
-// 發送訊息
-async function sendMessage() {
-  if (!inputText.value.trim() || !roomId.value) return
-  
-  try {
-    await ingestApi.sendText(
-      roomId.value,
-      inputText.value.trim(),
-      inputLang.value || undefined,
-      true
-    )
-    
-    inputText.value = ''
-  } catch (error) {
-    console.error('Send message failed:', error)
-    alert('發送訊息失敗')
-  }
-}
-
-// 處理鍵盤事件
-function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault()
-    sendMessage()
-  }
-}
+// 文字輸入功能已移除，純語音模式
 
 // 開始錄音
 async function startRecording() {
@@ -455,32 +415,17 @@ async function processRecording() {
 
 // 上傳音頻
 async function uploadAudio(audioBlob: Blob) {
-  const formData = new FormData()
-  formData.append('audio', audioBlob, `recording.${getFileExtension()}`)
-  formData.append('room_id', roomId.value)
-  formData.append('language_code', inputLang.value || 'zh-TW')
-  formData.append('send_to_board', 'true') // 直接發送到看板
-  
-  const token = sessionStore.token
-  if (!token) {
-    throw new Error('未登入')
+  try {
+    const result = await speechApi.upload(
+      roomId.value, 
+      audioBlob, 
+      inputLang.value || 'zh-TW'
+    )
+    console.log('✅ 語音轉文字成功:', result)
+  } catch (error) {
+    console.error('語音轉文字失敗:', error)
+    throw error
   }
-  
-  const response = await fetch('http://localhost:8081/api/speech/upload', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`
-    },
-    body: formData
-  })
-  
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`語音轉文字失敗: ${response.status} ${errorText}`)
-  }
-  
-  const result = await response.json()
-  console.log('✅ 語音轉文字成功:', result)
 }
 
 // 獲取支援的 MIME 類型（優先使用Groq相容格式）
@@ -547,24 +492,8 @@ async function updateSettings() {
     try {
       console.log(`🔄 更新語言設定 - 慣用語: ${inputLang.value}, 主板: ${outputLang.value}`)
       
-      const response = await fetch('http://localhost:8081/api/auth/update-langs', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionStore.token}`
-        },
-        body: JSON.stringify({
-          input_lang: inputLang.value,
-          output_lang: outputLang.value
-        })
-      })
-      
-      if (response.ok) {
-        const result = await response.json()
-        console.log(`✅ 語言設定已更新: 慣用語=${result.input_lang}, 主板=${result.output_lang}`)
-      } else {
-        console.error('❌ 更新語言設定失敗:', response.status)
-      }
+      const result = await speechApi.updateUserLangs(inputLang.value, outputLang.value)
+      console.log(`✅ 語言設定已更新: 慣用語=${result.input_lang}, 主板=${result.output_lang}`)
     } catch (error) {
       console.error('❌ 更新語言設定錯誤:', error)
     }
@@ -734,15 +663,16 @@ function formatTimestamp(timestamp: string | null) {
   background: rgba(255, 255, 255, 0.9);
 }
 
-.input-section {
-  max-width: 800px;
+.voice-section {
+  max-width: 600px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  align-items: center;
+  gap: 1.5rem;
 }
 
-.voice-input {
+.voice-input-container {
   display: flex;
   justify-content: center;
 }
@@ -789,52 +719,21 @@ function formatTimestamp(timestamp: string | null) {
   font-weight: 500;
 }
 
-.input-row {
-  display: flex;
-  gap: 1rem;
-  align-items: flex-end;
+.voice-tips {
+  text-align: center;
+  color: #666;
+  max-width: 400px;
 }
 
-.message-input {
-  flex: 1;
-  padding: 0.75rem;
-  border: 2px solid #ddd;
-  border-radius: 8px;
+.voice-tips p {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+}
+
+.voice-tips p:first-child {
+  font-weight: 600;
+  color: #333;
   font-size: 1rem;
-  resize: vertical;
-  min-height: 60px;
-  transition: border-color 0.3s;
-}
-
-.message-input:focus {
-  outline: none;
-  border-color: #007bff;
-}
-
-.message-input:disabled {
-  background: #f8f9fa;
-  cursor: not-allowed;
-}
-
-.send-btn {
-  padding: 0.75rem 1.5rem;
-  background: #007bff;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: background-color 0.3s;
-  height: fit-content;
-}
-
-.send-btn:hover:not(:disabled) {
-  background: #0056b3;
-}
-
-.send-btn:disabled {
-  background: #6c757d;
-  cursor: not-allowed;
 }
 
 @keyframes fadeIn {
@@ -919,6 +818,10 @@ function formatTimestamp(timestamp: string | null) {
     padding: 1rem;
   }
   
+  .voice-section {
+    gap: 1rem;
+  }
+  
   .voice-btn {
     min-width: 140px;
     min-height: 100px;
@@ -934,20 +837,16 @@ function formatTimestamp(timestamp: string | null) {
     font-weight: 600;
   }
   
-  .input-row {
-    flex-direction: column;
-    gap: 0.75rem;
+  .voice-tips {
+    max-width: 300px;
   }
   
-  .message-input {
-    min-height: 80px;
-    font-size: 1rem;
+  .voice-tips p {
+    font-size: 0.8rem;
   }
   
-  .send-btn {
-    width: 100%;
-    padding: 1rem;
-    font-size: 1.1rem;
+  .voice-tips p:first-child {
+    font-size: 0.9rem;
   }
 }
 

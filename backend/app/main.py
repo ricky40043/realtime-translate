@@ -12,14 +12,21 @@ load_dotenv()
 
 app = FastAPI(title="Realtime Translation API", version="1.0.0")
 
-# CORS 設定
+origins = [
+    "http://localhost",
+    "http://localhost:80", 
+    "http://localhost:5173",
+    "http://localhost:8081",
+    "https://ecf5f74f766d.ngrok-free.app",
+    "*",  # 臨時允許所有來源進行測試
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 開發環境允許所有來源
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_origins=origins,      # 不可用 "*"
+    allow_credentials=True,     # 若用 Cookie 或需要帶授權
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]
 )
 
 # 使用全域連線管理器

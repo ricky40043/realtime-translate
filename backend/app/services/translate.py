@@ -127,7 +127,7 @@ class TranslationService:
             }
     
     async def batch_translate(self, text: str, target_langs: List[str], source_lang: Optional[str] = None) -> Dict[str, Dict]:
-        """批次翻譯到多個目標語言"""
+        """批次翻譯到多個目標語言 - 已優化避免重複翻譯"""
         # 如果使用模擬模式，委託給模擬服務
         if self.use_mock:
             from .mock_translate import mock_translation_service
@@ -143,19 +143,55 @@ class TranslationService:
             from .google_translate_v3 import google_translate_v3_service
             return await google_translate_v3_service.batch_translate(text, target_langs, source_lang)
         
+        # 🚀 效能優化：去重和跳過相同語言翻譯
+        unique_target_langs = list(set(target_langs))  # 去除重複的目標語言
+        skipped_count = len(target_langs) - len(unique_target_langs)
+        
+        if skipped_count > 0:
+            print(f"🔧 翻譯優化 - 去除 {skipped_count} 個重複語言，原始: {len(target_langs)} → 優化後: {len(unique_target_langs)}")
+            print(f"   原始語言列表: {target_langs}")
+            print(f"   去重後列表: {unique_target_langs}")
+        
         tasks = []
-        for target_lang in target_langs:
-            if target_lang != source_lang:  # 跳過相同語言
+        skipped_langs = {}
+        translate_count = 0
+        
+        for target_lang in unique_target_langs:
+            # 🎯 優化：跳過源語言 = 目標語言的翻譯
+            if target_lang == source_lang:
+                print(f"⏭️  跳過翻譯 {source_lang} → {target_lang} (相同語言)")
+                skipped_langs[target_lang] = {
+                    "text": text,
+                    "source_lang": source_lang,
+                    "target_lang": target_lang,
+                    "latency_ms": 0,
+                    "quality": 1.0,
+                    "skipped": True,
+                    "reason": "same_language"
+                }
+            else:
                 task = self.translate_text(text, target_lang, source_lang)
                 tasks.append((target_lang, task))
+                translate_count += 1
+        
+        print(f"🔧 翻譯優化結果:")
+        print(f"   實際需要翻譯: {translate_count} 個語言")
+        print(f"   跳過相同語言: {len(skipped_langs)} 個")
+        print(f"   效能提升: {((len(target_langs) - translate_count) / len(target_langs) * 100):.1f}%")
         
         results = {}
+        
+        # 添加跳過的語言結果
+        results.update(skipped_langs)
+        
+        # 執行翻譯任務
         if tasks:
             completed_tasks = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
             
             for i, (target_lang, _) in enumerate(tasks):
                 result = completed_tasks[i]
                 if isinstance(result, Exception):
+                    print(f"❌ 翻譯失敗 {target_lang}: {result}")
                     # 處理異常情況
                     results[target_lang] = {
                         "text": text,
@@ -168,17 +204,18 @@ class TranslationService:
                 else:
                     results[target_lang] = result
         
-        # 原語言直接回傳原文
-        if source_lang and source_lang in target_langs:
-            results[source_lang] = {
-                "text": text,
-                "source_lang": source_lang,
-                "target_lang": source_lang,
-                "latency_ms": 0,
-                "quality": 1.0
-            }
+        # 🔄 效能優化：為原始的重複語言建立對映
+        final_results = {}
+        for original_lang in target_langs:
+            if original_lang in results:
+                # 復用已翻譯的結果
+                final_results[original_lang] = results[original_lang].copy()
+                # 移除內部標記
+                if "skipped" in final_results[original_lang]:
+                    del final_results[original_lang]["skipped"]
+                    del final_results[original_lang]["reason"]
         
-        return results
+        return final_results
     
     def _should_use_mock(self) -> bool:
         """檢查是否應該使用模擬翻譯服務"""
