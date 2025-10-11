@@ -9,55 +9,14 @@
           {{ sessionStore.isConnected ? '已連線' : '連線中...' }}
         </div>
       </div>
-      <div class="language-settings">
-        <div class="lang-setting">
-          <label>我的慣用語(個人字幕):</label>
-          <select v-model="inputLang" @change="updateSettings">
-            <option value="zh-TW">繁體中文</option>
-            <option value="zh-CN">簡體中文</option>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-            <option value="de">Deutsch</option>
-            <option value="it">Italiano</option>
-            <option value="pt">Português</option>
-            <option value="ru">Русский</option>
-            <option value="ar">العربية</option>
-            <option value="hi">हिन्दी</option>
-            <option value="th">ไทย</option>
-            <option value="vi">Tiếng Việt</option>
-            <option value="my">မြန်မာ (緬甸文)</option>
-            <option value="id">Bahasa Indonesia (印尼文)</option>
-            <option value="ms">Bahasa Melayu (馬來文)</option>
-            <option value="yue">廣東話</option>
-          </select>
+      <div class="user-controls">
+        <div class="user-info">
+          <span class="user-name">{{ userSettings.displayName || '未設定' }}</span>
+          <span class="lang-info">{{ inputLang }} → {{ outputLang }}</span>
         </div>
-        <div class="lang-setting">
-          <label>主板顯示語言:</label>
-          <select v-model="outputLang" @change="updateSettings">
-            <option value="zh-TW">繁體中文</option>
-            <option value="zh-CN">簡體中文</option>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-            <option value="de">Deutsch</option>
-            <option value="it">Italiano</option>
-            <option value="pt">Português</option>
-            <option value="ru">Русский</option>
-            <option value="ar">العربية</option>
-            <option value="hi">हिन्दी</option>
-            <option value="th">ไทย</option>
-            <option value="vi">Tiếng Việt</option>
-            <option value="my">မြန်မာ (緬甸文)</option>
-            <option value="id">Bahasa Indonesia (印尼文)</option>
-            <option value="ms">Bahasa Melayu (馬來文)</option>
-            <option value="yue">廣東話</option>
-          </select>
-        </div>
+        <button @click="openSettings" class="settings-btn" title="個人設定">
+          ⚙️
+        </button>
       </div>
     </header>
 
@@ -87,29 +46,28 @@
     <!-- 底部語音輸入區域 -->
     <footer class="user-footer">
       <div class="voice-section">
-        <!-- 語音輸入按鈕 -->
-        <div class="voice-input-container">
-          <button 
-            @click="toggleRecording"
-            :class="['voice-btn', { recording: isRecording }]"
-            :disabled="!sessionStore.isConnected || isProcessing"
-          >
-            <span class="voice-icon">🎤</span>
-            <span class="voice-text">{{ 
-              isProcessing ? '處理中...' : 
-              isRecording ? '點擊送出' : 
-              '點擊錄音' 
-            }}</span>
-          </button>
-        </div>
-        
-        <!-- 語音提示 -->
-        <div class="voice-tips">
-          <p>🎤 純語音模式</p>
-          <p>點擊開始錄音，再點擊送出翻譯</p>
-        </div>
+        <!-- 智能語音錄音器 -->
+        <SmartVoiceRecorder
+          :room-id="roomId"
+          :user-lang="inputLang"
+          :settings="userSettings"
+          :disabled="!sessionStore.isConnected"
+          @transcript="handleTranscript"
+          @error="handleVoiceError"
+          @recording-start="handleRecordingStart"
+          @recording-end="handleRecordingEnd"
+        />
       </div>
     </footer>
+
+    <!-- 設定Modal -->
+    <SettingsModal
+      :show="showSettingsModal"
+      :initial-settings="userSettings"
+      :is-first-time="isFirstTime"
+      @close="closeSettingsModal"
+      @save="saveUserSettings"
+    />
   </div>
 </template>
 
@@ -120,6 +78,18 @@ import { useSessionStore } from '../stores/session'
 import { authApi, roomApi, ingestApi } from '../api/http'
 import { speechApi } from '../api/speech'
 import type { Message } from '../stores/session'
+import SettingsModal from '../components/SettingsModal.vue'
+import SmartVoiceRecorder from '../components/SmartVoiceRecorder.vue'
+
+interface AdvancedSettings {
+  displayName: string
+  inputLang: string
+  outputLang: string
+  voiceThreshold: number
+  silenceTimeout: number
+  minRecordingTime: number
+  maxRecordingTime: number
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -133,10 +103,21 @@ const isProcessing = ref(false)
 const ws = ref<WebSocket | null>(null)
 const connectedUsers = ref(0)
 
-// 錄音相關
-const mediaRecorder = ref<MediaRecorder | null>(null)
-const audioChunks = ref<Blob[]>([])
-const stream = ref<MediaStream | null>(null)
+// 設定Modal相關
+const showSettingsModal = ref(false)
+const isFirstTime = ref(false)
+const userSettings = ref<AdvancedSettings>({
+  displayName: '',
+  inputLang: 'zh-TW',
+  outputLang: 'zh-TW',
+  voiceThreshold: 10,
+  silenceTimeout: 5,
+  minRecordingTime: 1,
+  maxRecordingTime: 30
+})
+
+// 語音相關狀態（由SmartVoiceRecorder管理）
+// 移除舊的錄音相關變量
 
 // 房間 ID
 const roomId = ref<string>('')
@@ -165,6 +146,9 @@ onMounted(async () => {
   
   roomId.value = routeRoomId
   
+  // 檢查是否首次進入
+  checkFirstTimeUser()
+  
   // 每次都進行新的匿名登入，確保每個分頁有不同的用戶ID
   await performGuestLogin()
   
@@ -174,11 +158,15 @@ onMounted(async () => {
   // 載入房間資料並連線
   await loadRoom()
   await connectWebSocket()
+  
+  // 如果是首次進入，自動顯示設定modal
+  if (isFirstTime.value) {
+    showSettingsModal.value = true
+  }
 })
 
 onUnmounted(() => {
   disconnectWebSocket()
-  fullCleanup()
 })
 
 // 監聽房間變化
@@ -342,177 +330,33 @@ function handleWebSocketMessage(message: any) {
 
 // 文字輸入功能已移除，純語音模式
 
-// 切換錄音狀態
-async function toggleRecording() {
-  if (isRecording.value) {
-    stopRecording()
-  } else {
-    await startRecording()
-  }
-}
-
-// 開始錄音
-async function startRecording() {
-  if (!sessionStore.isConnected || isProcessing.value) return
-  
-  try {
-    console.log('🎤 請求麥克風權限...')
-    
-    // 請求麥克風權限
-    stream.value = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 48000
-      }
-    })
-    
-    console.log('✅ 麥克風權限獲取成功')
-    
-    // 建立 MediaRecorder
-    const mimeType = getSupportedMimeType()
-    mediaRecorder.value = new MediaRecorder(stream.value, {
-      mimeType: mimeType,
-      audioBitsPerSecond: 128000
-    })
-    
-    audioChunks.value = []
-    
-    mediaRecorder.value.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.value.push(event.data)
-      }
-    }
-    
-    mediaRecorder.value.onstop = async () => {
-      await processRecording()
-    }
-    
-    // 開始錄音
-    mediaRecorder.value.start(100) // 每100ms收集一次數據
-    isRecording.value = true
-    console.log('🔴 開始錄音')
-    
-  } catch (error) {
-    console.error('❌ 麥克風權限被拒絕:', error)
-    alert(`無法使用麥克風: ${error.message}`)
-    cleanup()
-  }
-}
-
-// 停止錄音
-function stopRecording() {
-  if (mediaRecorder.value && isRecording.value) {
-    console.log('⏹️ 停止錄音')
-    mediaRecorder.value.stop()
-    isRecording.value = false
-  }
-}
-
-// 處理錄音
-async function processRecording() {
-  if (audioChunks.value.length === 0) {
-    console.error('❌ 錄音資料為空')
-    cleanup()
-    return
-  }
-  
-  try {
-    isProcessing.value = true
-    console.log('🔄 處理錄音資料...')
-    
-    // 合併音頻資料
-    const mimeType = getSupportedMimeType()
-    const audioBlob = new Blob(audioChunks.value, { type: mimeType })
-    
-    console.log(`📦 音頻資料大小: ${(audioBlob.size / 1024).toFixed(1)} KB`)
-    
-    // 上傳到後端進行語音轉文字
-    await uploadAudio(audioBlob)
-    
-  } catch (error) {
-    console.error('❌ 處理錄音失敗:', error)
-    alert('語音處理失敗，請重試')
-  } finally {
-    isProcessing.value = false
-    cleanup()
-  }
-}
-
-// 上傳音頻
-async function uploadAudio(audioBlob: Blob) {
-  try {
-    const result = await speechApi.upload(
-      roomId.value, 
-      audioBlob, 
-      inputLang.value || 'zh-TW'
-    )
-    console.log('✅ 語音轉文字成功:', result)
-  } catch (error) {
-    console.error('語音轉文字失敗:', error)
-    throw error
-  }
-}
-
-// 獲取支援的 MIME 類型（優先使用Groq相容格式）
-function getSupportedMimeType(): string {
-  const types = [
-    'audio/wav',           // Groq最佳支援
-    'audio/mp4',           // Groq支援
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus'
-  ]
-  
-  for (const type of types) {
-    if (MediaRecorder.isTypeSupported(type)) {
-      console.log(`🎤 使用音頻格式: ${type}`)
-      return type
-    }
-  }
-  
-  console.log('🎤 使用預設音頻格式: audio/webm')
-  return 'audio/webm'
-}
-
-// 獲取檔案副檔名
-function getFileExtension(): string {
-  const mimeType = getSupportedMimeType()
-  if (mimeType.includes('wav')) return 'wav'
-  if (mimeType.includes('mp4')) return 'm4a'
-  if (mimeType.includes('webm')) return 'webm'
-  if (mimeType.includes('ogg')) return 'ogg'
-  return 'wav'
-}
-
-// 清理資源
-function cleanup() {
-  // 不要停止音頻軌道，保持麥克風權限活躍
-  // 只清理錄音相關的資源
-  mediaRecorder.value = null
-  audioChunks.value = []
-}
-
-// 完全清理資源（僅在組件卸載時調用）
-function fullCleanup() {
-  if (stream.value) {
-    stream.value.getTracks().forEach(track => track.stop())
-    stream.value = null
-  }
-  cleanup()
-}
+// 舊的錄音方法已移除，改用SmartVoiceRecorder組件
 
 // 載入用戶設定
 function loadUserSettings() {
+  // 載入進階設定
+  const savedAdvancedSettings = localStorage.getItem('userAdvancedSettings')
+  if (savedAdvancedSettings) {
+    const advanced = JSON.parse(savedAdvancedSettings)
+    userSettings.value = { ...userSettings.value, ...advanced }
+    inputLang.value = advanced.inputLang || 'zh-TW'
+    outputLang.value = advanced.outputLang || 'zh-TW'
+    console.log('📝 從 localStorage 載入進階設定:', advanced)
+  }
+  
   // 優先使用 sessionStore 中的用戶語言設定（確保用戶隔離）
   if (sessionStore.user?.inputLang) {
     inputLang.value = sessionStore.user.inputLang
+    userSettings.value.inputLang = sessionStore.user.inputLang
     console.log(`📝 從 session 載入慣用語設定: ${inputLang.value}`)
   }
   if (sessionStore.user?.outputLang) {
     outputLang.value = sessionStore.user.outputLang
+    userSettings.value.outputLang = sessionStore.user.outputLang
     console.log(`📝 從 session 載入主板語言設定: ${outputLang.value}`)
+  }
+  if (sessionStore.user?.displayName) {
+    userSettings.value.displayName = sessionStore.user.displayName
   }
   
   // 如果 session 中沒有設定，才使用 localStorage 作為後備
@@ -522,9 +366,11 @@ function loadUserSettings() {
       const settings = JSON.parse(savedSettings)
       if (!sessionStore.user?.inputLang) {
         inputLang.value = settings.inputLang || 'zh-TW'
+        userSettings.value.inputLang = settings.inputLang || 'zh-TW'
       }
       if (!sessionStore.user?.outputLang) {
-        outputLang.value = settings.outputLang || 'en'
+        outputLang.value = settings.outputLang || 'zh-TW'
+        userSettings.value.outputLang = settings.outputLang || 'zh-TW'
       }
       console.log(`📝 從 localStorage 載入語言設定後備`)
     }
@@ -559,6 +405,96 @@ async function updateSettings() {
 function formatTimestamp(timestamp: string | null) {
   if (!timestamp) return ''
   return new Date(timestamp).toLocaleTimeString()
+}
+
+// 檢查是否首次進入
+function checkFirstTimeUser() {
+  const hasSettings = localStorage.getItem('userAdvancedSettings')
+  isFirstTime.value = !hasSettings
+}
+
+// 開啟設定Modal
+function openSettings() {
+  showSettingsModal.value = true
+}
+
+// 關閉設定Modal
+function closeSettingsModal() {
+  showSettingsModal.value = false
+}
+
+// 保存用戶設定
+async function saveUserSettings(settings: AdvancedSettings) {
+  try {
+    // 更新本地設定
+    userSettings.value = { ...settings }
+    
+    // 更新語言設定
+    inputLang.value = settings.inputLang
+    outputLang.value = settings.outputLang
+    
+    // 保存到localStorage
+    localStorage.setItem('userAdvancedSettings', JSON.stringify(settings))
+    
+    // 更新session store中的用戶資料
+    if (sessionStore.user) {
+      sessionStore.user.displayName = settings.displayName
+      sessionStore.user.inputLang = settings.inputLang
+      sessionStore.user.outputLang = settings.outputLang
+      localStorage.setItem('user', JSON.stringify(sessionStore.user))
+    }
+    
+    // 更新後端設定
+    await updateSettings()
+    
+    // 如果是首次設定，標記為已完成
+    if (isFirstTime.value) {
+      isFirstTime.value = false
+      closeSettingsModal()
+    }
+    
+    console.log('✅ 用戶設定已保存:', settings)
+  } catch (error) {
+    console.error('❌ 保存設定失敗:', error)
+    alert('保存設定失敗，請重試')
+  }
+}
+
+// SmartVoiceRecorder 事件處理
+function handleTranscript(result: { text: string; confidence: number; lang: string }) {
+  console.log('✅ 收到語音識別結果:', result)
+  
+  // 透過 WebSocket 發送翻譯請求
+  if (ws.value && ws.value.readyState === WebSocket.OPEN && sessionStore.user) {
+    const message = {
+      type: 'speech',
+      room_id: roomId.value,
+      speaker_id: sessionStore.user.id,
+      speaker_name: sessionStore.user.displayName || userSettings.value.displayName,
+      text: result.text,
+      source_lang: result.lang,
+      target_lang: outputLang.value,
+      confidence: result.confidence
+    }
+
+    ws.value.send(JSON.stringify(message))
+    console.log('📤 發送語音翻譯請求:', message)
+  }
+}
+
+function handleVoiceError(error: string) {
+  console.error('❌ 語音錄音錯誤:', error)
+  // 可以在這裡添加用戶友好的錯誤提示
+}
+
+function handleRecordingStart() {
+  console.log('🎤 開始智能錄音')
+  isRecording.value = true
+}
+
+function handleRecordingEnd() {
+  console.log('⏹️ 結束智能錄音')
+  isRecording.value = false
 }
 </script>
 
@@ -608,27 +544,54 @@ function formatTimestamp(timestamp: string | null) {
   background: #28a745;
 }
 
-.language-settings {
+.user-controls {
   display: flex;
+  align-items: center;
   gap: 1rem;
 }
 
-.lang-setting {
+.user-info {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  text-align: right;
 }
 
-.lang-setting label {
+.user-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.lang-info {
   font-size: 0.8rem;
   color: #666;
+  background: #f8f9fa;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  border: 1px solid #e9ecef;
 }
 
-.lang-setting select {
-  padding: 0.25rem 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 0.9rem;
+.settings-btn {
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.settings-btn:hover {
+  background: #5a6fd8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
 .subtitle-main {
@@ -762,11 +725,10 @@ function formatTimestamp(timestamp: string | null) {
 }
 
 .voice-btn.recording {
-  background: linear-gradient(135deg, #ff4444, #cc0000);
-  color: white;
+  background: #ff4444 !important;
+  color: white !important;
   transform: scale(1.1);
   box-shadow: 0 0 20px rgba(255, 68, 68, 0.7);
-  border: 3px solid #ff0000;
   animation: pulse 1s infinite;
 }
 

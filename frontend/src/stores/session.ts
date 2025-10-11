@@ -7,6 +7,11 @@ export interface User {
   preferredLang: string
   inputLang?: string
   outputLang?: string
+  // 高級語音設定
+  voiceThreshold?: number
+  silenceTimeout?: number
+  minRecordingTime?: number
+  maxRecordingTime?: number
 }
 
 export interface Room {
@@ -119,6 +124,18 @@ export const useSessionStore = defineStore('session', () => {
       localStorage.setItem('user', JSON.stringify(user.value))
     }
   }
+
+  function updateUserAdvancedSettings(settings: {
+    voiceThreshold?: number
+    silenceTimeout?: number
+    minRecordingTime?: number
+    maxRecordingTime?: number
+  }) {
+    if (user.value) {
+      Object.assign(user.value, settings)
+      localStorage.setItem('user', JSON.stringify(user.value))
+    }
+  }
   
   return {
     // State
@@ -144,6 +161,7 @@ export const useSessionStore = defineStore('session', () => {
     clearMessages,
     setWebSocket,
     updateUserLang,
-    updateUserLangs
+    updateUserLangs,
+    updateUserAdvancedSettings
   }
 })

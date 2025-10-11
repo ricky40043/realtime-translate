@@ -173,8 +173,8 @@ onMounted(async () => {
   if (routeRoomId) {
     roomId.value = routeRoomId
   } else {
-    // 沒有房間 ID，建立新房間
-    await createRoom()
+    // 沒有房間 ID，停留在首頁，不自動創建房間
+    console.log('📍 停留在房間首頁，等待用戶手動創建房間')
   }
   
   // 如果未登入，先進行匿名登入

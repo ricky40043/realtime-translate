@@ -1,0 +1,751 @@
+<template>
+  <div class="smart-voice-recorder">
+    <button
+      @click="toggleRecording"
+      :class="['smart-record-btn', { 
+        recording: isRecording, 
+        processing: isProcessing,
+        disabled: !isSupported || isProcessing 
+      }]"
+      :disabled="!isSupported || isProcessing"
+    >
+      <div class="btn-content">
+        <div class="icon">
+          <span v-if="!isRecording && !isProcessing">🎤</span>
+          <span v-else-if="isProcessing">⏳</span>
+          <div v-else class="recording-animation">
+            <div class="pulse"></div>
+            <span>🔴</span>
+          </div>
+        </div>
+        <div class="text">
+          <span v-if="!isSupported">不支援</span>
+          <span v-else-if="isProcessing">處理中...</span>
+          <span v-else-if="isRecording">
+            智能錄音中 {{ formatTime(recordingTime) }}
+            <br>
+            <small>{{ vadStatus }}</small>
+          </span>
+          <span v-else>{{ recordingMode === 'manual' ? '點擊錄音' : '智能語音輸入' }}</span>
+        </div>
+      </div>
+    </button>
+    
+    <!-- 智能檢測狀態指示器 -->
+    <div v-if="isRecording" class="smart-indicator">
+      <div class="volume-display">
+        <div class="volume-bars">
+          <div 
+            v-for="i in 10" 
+            :key="i"
+            class="volume-bar"
+            :class="{ 
+              active: volumeLevel >= i,
+              voice: isVoiceDetected && volumeLevel >= i,
+              silence: !isVoiceDetected && volumeLevel >= i
+            }"
+          ></div>
+        </div>
+        <div class="threshold-line" :style="{ left: `${(settings.voiceThreshold / 50) * 100}%` }"></div>
+      </div>
+      
+      <div class="vad-info">
+        <div class="vad-status" :class="{ active: isVoiceDetected }">
+          {{ isVoiceDetected ? '🎙️ 檢測到語音' : '🔇 靜音中' }}
+        </div>
+        <div class="silence-timer" v-if="!isVoiceDetected && silenceTimer > 0">
+          靜音 {{ (settings.silenceTimeout - silenceTimer).toFixed(1) }}s
+        </div>
+        <div class="auto-stop-info" v-if="recordingTime >= settings.maxRecordingTime - 5">
+          將在 {{ (settings.maxRecordingTime - recordingTime).toFixed(0) }}s 後自動結束
+        </div>
+      </div>
+    </div>
+    
+    <!-- 錄音模式切換 -->
+    <div class="mode-selector">
+      <button 
+        @click="recordingMode = 'smart'"
+        :class="['mode-btn', { active: recordingMode === 'smart' }]"
+      >
+        🧠 智能模式
+      </button>
+      <button 
+        @click="recordingMode = 'manual'"
+        :class="['mode-btn', { active: recordingMode === 'manual' }]"
+      >
+        👆 手動模式
+      </button>
+    </div>
+    
+    <!-- 錯誤訊息 -->
+    <div v-if="error" class="error-message">
+      {{ error }}
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { speechApi } from '../api/speech'
+
+interface SmartSettings {
+  voiceThreshold: number
+  silenceTimeout: number
+  minRecordingTime: number
+  maxRecordingTime: number
+}
+
+interface Props {
+  roomId: string
+  disabled?: boolean
+  userLang?: string
+  settings: SmartSettings
+}
+
+interface Emits {
+  (e: 'transcript', result: { text: string; confidence: number; lang: string }): void
+  (e: 'error', error: string): void
+  (e: 'recording-start'): void
+  (e: 'recording-end'): void
+}
+
+const props = defineProps<Props>()
+const emit = defineEmits<Emits>()
+
+// 響應式狀態
+const isSupported = ref(false)
+const isRecording = ref(false)
+const isProcessing = ref(false)
+const recordingTime = ref(0)
+const volumeLevel = ref(0)
+const error = ref('')
+const recordingMode = ref<'smart' | 'manual'>('smart')
+
+// 語音活動檢測 (VAD) 相關
+const isVoiceDetected = ref(false)
+const vadStatus = ref('等待語音...')
+const silenceTimer = ref(0)
+const voiceStartTime = ref(0)
+const hasValidSpeech = ref(false)
+
+// 媒體相關
+const mediaRecorder = ref<MediaRecorder | null>(null)
+const audioChunks = ref<Blob[]>([])
+const stream = ref<MediaStream | null>(null)
+const recordingTimer = ref<number | null>(null)
+const volumeAnalyser = ref<AnalyserNode | null>(null)
+const volumeAnimationFrame = ref<number | null>(null)
+const vadTimer = ref<number | null>(null)
+
+// 智能檢測參數
+const vadSamples = ref<number[]>([])
+const vadSampleSize = 5 // 取樣數量用於平滑處理
+
+onMounted(() => {
+  checkSupport()
+})
+
+onUnmounted(() => {
+  fullCleanup()
+})
+
+// 監聽設定變化
+watch(() => props.settings, () => {
+  console.log('🔧 語音設定已更新:', props.settings)
+}, { deep: true })
+
+function checkSupport() {
+  isSupported.value = !!(
+    navigator.mediaDevices &&
+    navigator.mediaDevices.getUserMedia &&
+    window.MediaRecorder
+  )
+}
+
+async function toggleRecording() {
+  if (isRecording.value) {
+    if (recordingMode.value === 'manual') {
+      await stopRecording()
+    }
+    // 智能模式下會自動停止，不需要手動停止
+  } else {
+    await startRecording()
+  }
+}
+
+async function startRecording() {
+  try {
+    error.value = ''
+    console.log('🎤 開始請求麥克風權限...')
+    
+    // 檢查瀏覽器是否支援
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('瀏覽器不支援麥克風功能')
+    }
+    
+    // 請求麥克風權限
+    stream.value = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 48000
+      }
+    })
+    
+    console.log('✅ 麥克風權限獲得成功')
+    console.log('🎤 音頻軌道狀態:', stream.value.getAudioTracks().map(track => ({
+      label: track.label,
+      enabled: track.enabled,
+      readyState: track.readyState,
+      settings: track.getSettings()
+    })))
+    
+    // 設定智能語音檢測
+    setupSmartVAD(stream.value)
+    
+    // 建立 MediaRecorder
+    const mimeType = getSupportedMimeType()
+    mediaRecorder.value = new MediaRecorder(stream.value, {
+      mimeType: mimeType,
+      audioBitsPerSecond: 128000
+    })
+    
+    audioChunks.value = []
+    
+    mediaRecorder.value.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.value.push(event.data)
+      }
+    }
+    
+    mediaRecorder.value.onstop = async () => {
+      await processRecording()
+    }
+    
+    // 開始錄音
+    mediaRecorder.value.start(100)
+    isRecording.value = true
+    recordingTime.value = 0
+    silenceTimer.value = 0
+    hasValidSpeech.value = false
+    
+    // 開始計時
+    recordingTimer.value = window.setInterval(() => {
+      recordingTime.value += 0.1
+      
+      // 檢查最長錄音時間
+      if (recordingTime.value >= props.settings.maxRecordingTime) {
+        vadStatus.value = '達到最長錄音時間'
+        stopRecording()
+        return
+      }
+      
+      // 智能模式下的自動停止邏輯
+      if (recordingMode.value === 'smart') {
+        handleSmartRecordingLogic()
+      }
+    }, 100)
+    
+    emit('recording-start')
+    console.log('🎤 開始智能錄音')
+    
+  } catch (err) {
+    console.error('錄音失敗:', err)
+    error.value = '無法存取麥克風，請檢查權限設定'
+    cleanup()
+  }
+}
+
+function handleSmartRecordingLogic() {
+  if (!isVoiceDetected.value) {
+    silenceTimer.value += 0.1
+    
+    // 如果有過有效語音且靜音時間超過閾值，自動停止
+    if (hasValidSpeech.value && silenceTimer.value >= props.settings.silenceTimeout) {
+      vadStatus.value = '靜音時間達到閾值，自動結束'
+      stopRecording()
+      return
+    }
+    
+    vadStatus.value = hasValidSpeech.value ? 
+      `靜音中，${(props.settings.silenceTimeout - silenceTimer.value).toFixed(1)}s後結束` :
+      '等待語音輸入...'
+  } else {
+    silenceTimer.value = 0
+    if (recordingTime.value >= props.settings.minRecordingTime) {
+      hasValidSpeech.value = true
+    }
+    vadStatus.value = '正在錄製語音...'
+  }
+}
+
+async function stopRecording() {
+  if (mediaRecorder.value && isRecording.value) {
+    console.log('⏹️ 停止錄音')
+    mediaRecorder.value.stop()
+    isRecording.value = false
+    
+    if (recordingTimer.value) {
+      clearInterval(recordingTimer.value)
+      recordingTimer.value = null
+    }
+    
+    stopVolumeAnalysis()
+    emit('recording-end')
+  }
+}
+
+function setupSmartVAD(stream: MediaStream) {
+  try {
+    console.log('🔧 開始設定語音檢測...')
+    
+    const audioContext = new AudioContext()
+    console.log('🎵 AudioContext 狀態:', audioContext.state)
+    
+    // 如果AudioContext被暫停，嘗試恢復
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().then(() => {
+        console.log('🎵 AudioContext 已恢復')
+      })
+    }
+    
+    const source = audioContext.createMediaStreamSource(stream)
+    volumeAnalyser.value = audioContext.createAnalyser()
+    
+    // 調整設定以獲得更好的語音檢測
+    volumeAnalyser.value.fftSize = 256
+    volumeAnalyser.value.smoothingTimeConstant = 0.8
+    
+    source.connect(volumeAnalyser.value)
+    console.log('🔗 音頻源已連接到分析器')
+    
+    let debugCounter = 0
+    
+    const analyzeAudio = () => {
+      if (!volumeAnalyser.value || !isRecording.value) return
+      
+      const dataArray = new Uint8Array(volumeAnalyser.value.frequencyBinCount)
+      volumeAnalyser.value.getByteFrequencyData(dataArray)
+      
+      // 使用原本有效的音量計算方式
+      const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length
+      const normalizedVolume = Math.min(100, (average / 255) * 100)
+      
+      // 調試：每50幀輸出一次音量信息
+      debugCounter++
+      if (debugCounter % 50 === 0) {
+        console.log(`🔊 原始音量: ${average.toFixed(1)}, 標準化音量: ${normalizedVolume.toFixed(1)}%, 數據範圍: ${Math.min(...dataArray)}-${Math.max(...dataArray)}`)
+      }
+      
+      // 平滑處理
+      vadSamples.value.push(normalizedVolume)
+      if (vadSamples.value.length > vadSampleSize) {
+        vadSamples.value.shift()
+      }
+      
+      const smoothedVolume = vadSamples.value.reduce((sum, val) => sum + val, 0) / vadSamples.value.length
+      volumeLevel.value = Math.min(10, Math.floor(smoothedVolume / 10))
+      
+      // 語音活動檢測
+      const threshold = props.settings.voiceThreshold
+      const wasVoiceDetected = isVoiceDetected.value
+      isVoiceDetected.value = smoothedVolume > threshold
+      
+      // 調試：語音檢測狀態改變時輸出
+      if (wasVoiceDetected !== isVoiceDetected.value) {
+        console.log(`🎙️ 語音檢測狀態變化: ${isVoiceDetected.value ? '檢測到語音' : '靜音'} (音量: ${smoothedVolume.toFixed(1)}%, 閾值: ${threshold}%)`)
+      }
+      
+      volumeAnimationFrame.value = requestAnimationFrame(analyzeAudio)
+    }
+    
+    analyzeAudio()
+    console.log('✅ 語音檢測設定完成')
+    
+  } catch (err) {
+    console.error('❌ 無法設定語音檢測:', err)
+    error.value = '語音檢測設定失敗：' + err.message
+  }
+}
+
+function stopVolumeAnalysis() {
+  if (volumeAnimationFrame.value) {
+    cancelAnimationFrame(volumeAnimationFrame.value)
+    volumeAnimationFrame.value = null
+  }
+  volumeLevel.value = 0
+  isVoiceDetected.value = false
+  vadSamples.value = []
+  volumeAnalyser.value = null
+}
+
+async function processRecording() {
+  if (audioChunks.value.length === 0) {
+    error.value = '錄音資料為空'
+    cleanup()
+    return
+  }
+  
+  // 檢查最短錄音時間
+  if (recordingTime.value < props.settings.minRecordingTime) {
+    console.log(`⚠️ 錄音時間過短 (${recordingTime.value.toFixed(1)}s)，忽略此次錄音`)
+    cleanup()
+    return
+  }
+  
+  try {
+    isProcessing.value = true
+    console.log('🔄 處理錄音資料...')
+    
+    const mimeType = getSupportedMimeType()
+    const audioBlob = new Blob(audioChunks.value, { type: mimeType })
+    
+    console.log(`📦 音頻資料大小: ${(audioBlob.size / 1024).toFixed(1)} KB，時長: ${recordingTime.value.toFixed(1)}s`)
+    
+    await uploadAudio(audioBlob)
+    
+  } catch (err) {
+    console.error('處理錄音失敗:', err)
+    error.value = '處理錄音失敗，請重試'
+    emit('error', error.value)
+  } finally {
+    isProcessing.value = false
+    cleanup()
+  }
+}
+
+async function uploadAudio(audioBlob: Blob) {
+  const token = localStorage.getItem('token')
+  if (!token) {
+    throw new Error('未登入')
+  }
+  
+  const result = await speechApi.upload(props.roomId, audioBlob, props.userLang)
+  console.log('✅ STT 成功:', result)
+  
+  emit('transcript', {
+    text: result.transcript,
+    confidence: result.confidence,
+    lang: result.detected_lang
+  })
+}
+
+function getSupportedMimeType(): string {
+  const types = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+    'audio/wav'
+  ]
+  
+  return types.find(type => MediaRecorder.isTypeSupported(type)) || 'audio/webm'
+}
+
+function getFileExtension(): string {
+  const mimeType = getSupportedMimeType()
+  if (mimeType.includes('webm')) return 'webm'
+  if (mimeType.includes('mp4')) return 'mp4'
+  if (mimeType.includes('ogg')) return 'ogg'
+  if (mimeType.includes('wav')) return 'wav'
+  return 'webm'
+}
+
+function cleanup() {
+  // 關鍵修復：不要停止 stream，保持麥克風權限活躍
+  // 只清理錄音相關的資源
+  
+  stopVolumeAnalysis()
+  
+  if (recordingTimer.value) {
+    clearInterval(recordingTimer.value)
+    recordingTimer.value = null
+  }
+  
+  if (vadTimer.value) {
+    clearInterval(vadTimer.value)
+    vadTimer.value = null
+  }
+  
+  audioChunks.value = []
+  recordingTime.value = 0
+  silenceTimer.value = 0
+  hasValidSpeech.value = false
+  vadStatus.value = '等待語音...'
+}
+
+// 完全清理資源（僅在組件卸載時調用）
+function fullCleanup() {
+  if (stream.value) {
+    stream.value.getTracks().forEach(track => track.stop())
+    stream.value = null
+  }
+  cleanup()
+  if (mediaRecorder.value) {
+    mediaRecorder.value = null
+  }
+}
+
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+</script>
+
+<style scoped>
+.smart-voice-recorder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.smart-record-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 1rem 2rem;
+  cursor: pointer;
+  font-size: 1rem;
+  min-width: 200px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.smart-record-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+.smart-record-btn.recording {
+  background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+  animation: recordingPulse 2s infinite;
+}
+
+.smart-record-btn.processing {
+  background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+}
+
+.smart-record-btn.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@keyframes recordingPulse {
+  0%, 100% { box-shadow: 0 4px 15px rgba(231, 76, 60, 0.3); }
+  50% { box-shadow: 0 6px 25px rgba(231, 76, 60, 0.6); }
+}
+
+.btn-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icon {
+  font-size: 1.5rem;
+}
+
+.recording-animation {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.pulse {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.text {
+  text-align: center;
+  line-height: 1.4;
+}
+
+.text small {
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+.smart-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 1rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  min-width: 300px;
+}
+
+.volume-display {
+  position: relative;
+  width: 100%;
+}
+
+.volume-bars {
+  display: flex;
+  gap: 3px;
+  align-items: end;
+  justify-content: center;
+  height: 40px;
+}
+
+.volume-bar {
+  width: 6px;
+  height: 8px;
+  background: #e9ecef;
+  border-radius: 3px;
+  transition: all 0.1s;
+}
+
+.volume-bar.active {
+  height: 20px;
+}
+
+.volume-bar.voice {
+  background: linear-gradient(to top, #28a745, #20c997);
+}
+
+.volume-bar.silence {
+  background: linear-gradient(to top, #6c757d, #adb5bd);
+}
+
+.threshold-line {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 100%;
+  background: #dc3545;
+  transform: translateY(-50%);
+  opacity: 0.7;
+}
+
+.threshold-line::before {
+  content: '閾值';
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.7rem;
+  color: #dc3545;
+  white-space: nowrap;
+}
+
+.vad-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+
+.vad-status {
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  background: #f8f9fa;
+  color: #6c757d;
+  transition: all 0.3s;
+}
+
+.vad-status.active {
+  background: #d4edda;
+  color: #155724;
+}
+
+.silence-timer, .auto-stop-info {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.auto-stop-info {
+  color: #e67e22;
+  font-weight: 600;
+}
+
+.mode-selector {
+  display: flex;
+  gap: 0.5rem;
+  background: #f8f9fa;
+  padding: 0.25rem;
+  border-radius: 20px;
+}
+
+.mode-btn {
+  background: none;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.3s;
+  color: #666;
+}
+
+.mode-btn.active {
+  background: #667eea;
+  color: white;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.error-message {
+  background: #f8d7da;
+  color: #721c24;
+  padding: 0.75rem;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 0.9rem;
+  max-width: 300px;
+}
+
+/* 響應式設計 */
+@media (max-width: 768px) {
+  .smart-voice-recorder {
+    padding: 0.5rem;
+  }
+  
+  .smart-record-btn {
+    min-width: 180px;
+    padding: 0.8rem 1.5rem;
+  }
+  
+  .smart-indicator {
+    min-width: 280px;
+    padding: 0.8rem;
+  }
+  
+  .volume-bars {
+    height: 30px;
+  }
+  
+  .volume-bar.active {
+    height: 15px;
+  }
+}
+</style>
