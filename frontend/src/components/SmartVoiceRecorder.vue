@@ -91,7 +91,9 @@ import { speechApi } from '../api/speech'
 
 interface SmartSettings {
   segmentThreshold: number    // 語音檢測閾值（統一用於語音檢測和自動分段）
+  silenceTimeout: number      // 靜音超時時間（多久沒聲音後結束錄音）
   minSegmentTime: number      // 最短分段時間
+  segmentDelay: number        // 分段延遲時間（低於閾值後持續多久才送出）
   maxRecordingTime: number    // 最長連續錄音時間
 }
 
@@ -302,10 +304,10 @@ async function handleSmartRecordingLogic() {
     segmentTimer.value += 0.1
     console.log(`⏱️ 低音量持續時間: ${segmentTimer.value.toFixed(1)}s, 有效語音: ${hasValidSpeech.value}`)
     
-    // 如果已經錄音超過最短時間，且音量持續低於閾值，則進行分段
-    if (segmentTimer.value >= 0.3 && hasValidSpeech.value) {
+    // 如果已經錄音超過最短時間，且音量持續低於閾值超過設定的延遲時間，則進行分段
+    if (segmentTimer.value >= props.settings.segmentDelay && hasValidSpeech.value) {
       vadStatus.value = '檢測到分段點，送出音檔...'
-      console.log(`🎵 自動分段觸發：錄音 ${recordingTime.value.toFixed(1)}s，音量 ${currentVol.toFixed(1)}% 低於 ${segmentThreshold}% 持續 ${segmentTimer.value.toFixed(1)}s`)
+      console.log(`🎵 自動分段觸發：錄音 ${recordingTime.value.toFixed(1)}s，音量 ${currentVol.toFixed(1)}% 低於 ${segmentThreshold}% 持續 ${segmentTimer.value.toFixed(1)}s (設定延遲: ${props.settings.segmentDelay}s)`)
       await processCurrentSegment()
       return
     }
@@ -317,8 +319,26 @@ async function handleSmartRecordingLogic() {
     segmentTimer.value = 0
   }
   
-  // 檢測到語音，重置靜音計時器
-  if (!isLowVolume) {
+  // 靜音超時檢查（最後處理，用於結束整個錄音）
+  if (isLowVolume) {
+    silenceTimer.value += 0.1
+    
+    // 檢查是否達到靜音超時時間（完全結束錄音）
+    if (silenceTimer.value >= props.settings.silenceTimeout) {
+      if (hasValidSpeech.value) {
+        vadStatus.value = '靜音時間達到閾值，自動結束'
+        console.log(`🔇 靜音 ${silenceTimer.value.toFixed(1)}s 達到閾值 ${props.settings.silenceTimeout}s，完全結束錄音`)
+        stopRecording()
+        return
+      } else if (silenceTimer.value >= props.settings.silenceTimeout * 2) {
+        vadStatus.value = '未檢測到有效語音，自動結束'
+        console.log(`🔇 持續靜音 ${silenceTimer.value.toFixed(1)}s，未檢測到有效語音，自動結束`)
+        stopRecording()
+        return
+      }
+    }
+  } else {
+    // 檢測到語音，重置靜音計時器
     silenceTimer.value = 0
     
     // 檢查是否達到最短錄音時間
@@ -327,13 +347,21 @@ async function handleSmartRecordingLogic() {
     }
   }
   
-  // 顯示連續錄音剩餘時間
+  // 顯示狀態信息
   const remainingTime = Math.max(0, props.settings.maxRecordingTime - continuousRecordingTime.value)
   const timeInfo = remainingTime <= 5 ? ` [${remainingTime.toFixed(1)}s後強制發送]` : ''
   
-  vadStatus.value = hasValidSpeech.value ? 
-    `正在錄製語音(${currentVol.toFixed(1)}%)...${timeInfo}` : 
-    `檢測中(${currentVol.toFixed(1)}%)...${timeInfo}`
+  if (isLowVolume && hasValidSpeech.value) {
+    const silenceRemaining = Math.max(0, props.settings.silenceTimeout - silenceTimer.value)
+    vadStatus.value = `靜音中(${currentVol.toFixed(1)}%)，${silenceRemaining.toFixed(1)}s後結束${timeInfo}`
+  } else if (isLowVolume) {
+    const waitTime = Math.max(0, props.settings.silenceTimeout * 2 - silenceTimer.value)
+    vadStatus.value = `等待語音輸入(${currentVol.toFixed(1)}%)...${waitTime.toFixed(1)}s${timeInfo}`
+  } else {
+    vadStatus.value = hasValidSpeech.value ? 
+      `正在錄製語音(${currentVol.toFixed(1)}%)...${timeInfo}` : 
+      `檢測中(${currentVol.toFixed(1)}%)...${timeInfo}`
+  }
 }
 
 async function stopRecording() {

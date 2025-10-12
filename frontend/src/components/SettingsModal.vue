@@ -97,6 +97,21 @@
             
             <div class="form-group">
               <label class="form-label">
+                靜音結束時間 
+                <span class="threshold-value">{{ localSettings.silenceTimeout }}秒</span>
+              </label>
+              <input
+                v-model.number="localSettings.silenceTimeout"
+                type="range"
+                min="1"
+                max="10"
+                class="form-range"
+              />
+              <p class="form-help">靜音超過此時間自動結束錄音</p>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">
                 最短分段時間 
                 <span class="threshold-value">{{ localSettings.minSegmentTime }}秒</span>
               </label>
@@ -109,6 +124,22 @@
                 class="form-range"
               />
               <p class="form-help">錄音至少需要此時間才能進行自動分段</p>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">
+                分段延遲時間 
+                <span class="threshold-value">{{ localSettings.segmentDelay }}秒</span>
+              </label>
+              <input
+                v-model.number="localSettings.segmentDelay"
+                type="range"
+                min="0.5"
+                max="3"
+                step="0.5"
+                class="form-range"
+              />
+              <p class="form-help">音量低於閾值後持續此時間才會送出音檔</p>
             </div>
             
             <div class="form-group">
@@ -178,7 +209,9 @@ interface AdvancedSettings {
   inputLang: string
   outputLang: string
   segmentThreshold: number    // 語音檢測閾值（合併聲音檢測閾值和自動分段閾值）
+  silenceTimeout: number      // 靜音超時時間（多久沒聲音後結束錄音）
   minSegmentTime: number      // 最短分段時間（合併最短錄音時間和最短分段時間）
+  segmentDelay: number        // 分段延遲時間（低於閾值後持續多久才送出）
   maxRecordingTime: number    // 最長連續錄音時間
 }
 
@@ -206,7 +239,9 @@ const defaultSettings: AdvancedSettings = {
   inputLang: 'zh-TW',
   outputLang: 'zh-TW',
   segmentThreshold: 10,     // 10%語音檢測閾值
+  silenceTimeout: 5,        // 5秒靜音超時
   minSegmentTime: 1.0,      // 1秒最短分段時間
+  segmentDelay: 1.0,        // 1秒分段延遲
   maxRecordingTime: 30      // 30秒最長連續錄音
 }
 

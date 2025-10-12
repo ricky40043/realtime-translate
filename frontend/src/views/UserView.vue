@@ -86,7 +86,9 @@ interface AdvancedSettings {
   inputLang: string
   outputLang: string
   segmentThreshold: number    // 語音檢測閾值（統一用於語音檢測和自動分段）
+  silenceTimeout: number      // 靜音超時時間（多久沒聲音後結束錄音）
   minSegmentTime: number      // 最短分段時間
+  segmentDelay: number        // 分段延遲時間（低於閾值後持續多久才送出）
   maxRecordingTime: number    // 最長連續錄音時間
 }
 
@@ -110,7 +112,9 @@ const userSettings = ref<AdvancedSettings>({
   inputLang: 'zh-TW',
   outputLang: 'zh-TW',
   segmentThreshold: 10,     // 10%語音檢測閾值
+  silenceTimeout: 5,        // 5秒靜音超時
   minSegmentTime: 1.0,      // 1秒最短分段時間
+  segmentDelay: 1.0,        // 1秒分段延遲
   maxRecordingTime: 30      // 30秒最長連續錄音
 })
 
@@ -468,7 +472,7 @@ function handleTranscript(result: { text: string; confidence: number; lang: stri
       type: 'speech',
       room_id: roomId.value,
       speaker_id: sessionStore.user.id,
-      speaker_name: sessionStore.user.displayName || userSettings.value.displayName,
+      speaker_name: userSettings.value.displayName || sessionStore.user.displayName,
       text: result.text,
       source_lang: result.lang,
       target_lang: outputLang.value,
