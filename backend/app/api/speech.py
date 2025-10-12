@@ -289,8 +289,15 @@ async def upload_speech(
         print(f"🔍 過濾後結果: '{transcript}'")
         
         if not transcript:
-            print(f"⚠️ 辨識結果被過濾或為空，跳過處理")
-            raise HTTPException(status_code=400, detail="No valid transcript after filtering")
+            print(f"⚠️ 辨識結果被過濾或為空，跳過翻譯和Socket發送")
+            # 回傳成功但不進行任何翻譯或WebSocket處理
+            return SpeechResponse(
+                message_id="filtered",
+                transcript="",
+                confidence=0.0,
+                detected_lang=detected_lang,
+                status="filtered"
+            )
         
         # 如果轉錄結果信心度太低，警告但仍然處理
         if confidence < 0.7:

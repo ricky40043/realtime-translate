@@ -82,63 +82,48 @@
             
             <div class="form-group">
               <label class="form-label">
-                聲音檢測閾值 
-                <span class="threshold-value">{{ localSettings.voiceThreshold }}%</span>
+                語音檢測閾值 
+                <span class="threshold-value">{{ localSettings.segmentThreshold }}%</span>
               </label>
               <input
-                v-model.number="localSettings.voiceThreshold"
+                v-model.number="localSettings.segmentThreshold"
                 type="range"
                 min="1"
-                max="50"
+                max="30"
                 class="form-range"
               />
-              <p class="form-help">低於此音量視為靜音，數值越低越敏感</p>
+              <p class="form-help">低於此音量視為靜音，用於自動分段和語音檢測</p>
             </div>
             
             <div class="form-group">
               <label class="form-label">
-                靜音結束時間 
-                <span class="threshold-value">{{ localSettings.silenceTimeout }}秒</span>
+                最短分段時間 
+                <span class="threshold-value">{{ localSettings.minSegmentTime }}秒</span>
               </label>
               <input
-                v-model.number="localSettings.silenceTimeout"
-                type="range"
-                min="1"
-                max="10"
-                class="form-range"
-              />
-              <p class="form-help">靜音超過此時間自動結束錄音</p>
-            </div>
-            
-            <div class="form-group">
-              <label class="form-label">
-                最短錄音時間 
-                <span class="threshold-value">{{ localSettings.minRecordingTime }}秒</span>
-              </label>
-              <input
-                v-model.number="localSettings.minRecordingTime"
+                v-model.number="localSettings.minSegmentTime"
                 type="range"
                 min="0.5"
-                max="10"
+                max="3"
                 step="0.5"
                 class="form-range"
               />
-              <p class="form-help">避免誤觸發的最短錄音時間</p>
+              <p class="form-help">錄音至少需要此時間才能進行自動分段</p>
             </div>
             
             <div class="form-group">
               <label class="form-label">
-                最長錄音時間 
+                最長連續錄音時間 
                 <span class="threshold-value">{{ localSettings.maxRecordingTime }}秒</span>
               </label>
               <input
                 v-model.number="localSettings.maxRecordingTime"
                 type="range"
                 min="5"
-                max="30"
+                max="60"
                 class="form-range"
               />
-              <p class="form-help">超過此時間自動結束錄音</p>
+              <p class="form-help">連續錄音超過此時間自動強制分段</p>
             </div>
           </section>
           
@@ -192,10 +177,9 @@ interface AdvancedSettings {
   displayName: string
   inputLang: string
   outputLang: string
-  voiceThreshold: number
-  silenceTimeout: number
-  minRecordingTime: number
-  maxRecordingTime: number
+  segmentThreshold: number    // 語音檢測閾值（合併聲音檢測閾值和自動分段閾值）
+  minSegmentTime: number      // 最短分段時間（合併最短錄音時間和最短分段時間）
+  maxRecordingTime: number    // 最長連續錄音時間
 }
 
 interface Props {
@@ -221,10 +205,9 @@ const defaultSettings: AdvancedSettings = {
   displayName: '',
   inputLang: 'zh-TW',
   outputLang: 'zh-TW',
-  voiceThreshold: 10,
-  silenceTimeout: 5,
-  minRecordingTime: 3,
-  maxRecordingTime: 30
+  segmentThreshold: 10,     // 10%語音檢測閾值
+  minSegmentTime: 1.0,      // 1秒最短分段時間
+  maxRecordingTime: 30      // 30秒最長連續錄音
 }
 
 // 本地設定狀態
@@ -401,7 +384,7 @@ function setupVoiceTest(stream: MediaStream) {
       testVolumeLevel.value = Math.floor(normalizedVolume / 10)
       
       // 根據閾值更新狀態
-      if (normalizedVolume > localSettings.voiceThreshold) {
+      if (normalizedVolume > localSettings.segmentThreshold) {
         testStatus.value = `檢測到語音 (${normalizedVolume.toFixed(1)}%)`
       } else {
         testStatus.value = `靜音中 (${normalizedVolume.toFixed(1)}%)`

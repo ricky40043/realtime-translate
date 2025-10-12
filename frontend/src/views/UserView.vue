@@ -85,10 +85,9 @@ interface AdvancedSettings {
   displayName: string
   inputLang: string
   outputLang: string
-  voiceThreshold: number
-  silenceTimeout: number
-  minRecordingTime: number
-  maxRecordingTime: number
+  segmentThreshold: number    // 語音檢測閾值（統一用於語音檢測和自動分段）
+  minSegmentTime: number      // 最短分段時間
+  maxRecordingTime: number    // 最長連續錄音時間
 }
 
 const route = useRoute()
@@ -110,10 +109,9 @@ const userSettings = ref<AdvancedSettings>({
   displayName: '',
   inputLang: 'zh-TW',
   outputLang: 'zh-TW',
-  voiceThreshold: 10,
-  silenceTimeout: 5,
-  minRecordingTime: 1,
-  maxRecordingTime: 30
+  segmentThreshold: 10,     // 10%語音檢測閾值
+  minSegmentTime: 1.0,      // 1秒最短分段時間
+  maxRecordingTime: 30      // 30秒最長連續錄音
 })
 
 // 語音相關狀態（由SmartVoiceRecorder管理）

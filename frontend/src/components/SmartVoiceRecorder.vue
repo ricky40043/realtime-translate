@@ -46,7 +46,7 @@
             }"
           ></div>
         </div>
-        <div class="threshold-line" :style="{ left: `${(settings.voiceThreshold / 50) * 100}%` }"></div>
+        <div class="threshold-line" :style="{ left: `${(settings.segmentThreshold / 30) * 100}%` }"></div>
       </div>
       
       <div class="vad-info">
@@ -90,10 +90,9 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { speechApi } from '../api/speech'
 
 interface SmartSettings {
-  voiceThreshold: number
-  silenceTimeout: number
-  minRecordingTime: number
-  maxRecordingTime: number
+  segmentThreshold: number    // 語音檢測閾值（統一用於語音檢測和自動分段）
+  minSegmentTime: number      // 最短分段時間
+  maxRecordingTime: number    // 最長連續錄音時間
 }
 
 interface Props {
@@ -133,9 +132,11 @@ const currentVolume = ref(0) // 當前音量百分比
 // 自動分段錄音相關
 const segmentTimer = ref(0)
 const isSegmentMode = ref(false)
-const segmentThreshold = 10 // 10%音量閾值用於分段
-const minSegmentTime = 1.0 // 最少錄音1秒才能分段
 const hasProcessedSegment = ref(false)
+
+// 從外部設定獲取參數
+const getSegmentThreshold = () => props.settings.segmentThreshold
+const getMinSegmentTime = () => props.settings.minSegmentTime
 
 // 最長錄音時間相關
 const continuousRecordingTime = ref(0) // 連續錄音時間（會在發送後重置）
@@ -290,65 +291,49 @@ async function handleSmartRecordingLogic() {
   
   // 使用實際音量數值進行判斷
   const currentVol = currentVolume.value
-  const isLowVolume = currentVol <= segmentThreshold // 低於10%
+  const segmentThreshold = getSegmentThreshold()
+  const minSegmentTime = getMinSegmentTime()
+  const isLowVolume = currentVol <= segmentThreshold
   
   // 檢查自動分段邏輯（優先處理）
+  console.log(`🔍 分段檢查: 錄音時間=${recordingTime.value.toFixed(1)}s, 最短時間=${minSegmentTime}s, 低音量=${isLowVolume}, 音量=${currentVol.toFixed(1)}%, 閾值=${segmentThreshold}%`)
+  
   if (recordingTime.value >= minSegmentTime && isLowVolume) {
     segmentTimer.value += 0.1
+    console.log(`⏱️ 低音量持續時間: ${segmentTimer.value.toFixed(1)}s, 有效語音: ${hasValidSpeech.value}`)
     
-    // 如果已經錄音超過1秒，且音量持續低於10%，則進行分段
-    if (segmentTimer.value >= 1 && hasValidSpeech.value && continuousRecordingTime.value > props.settings.minRecordingTime) {
+    // 如果已經錄音超過最短時間，且音量持續低於閾值，則進行分段
+    if (segmentTimer.value >= 0.3 && hasValidSpeech.value) {
       vadStatus.value = '檢測到分段點，送出音檔...'
-      console.log(`🎵 自動分段：錄音 ${recordingTime.value.toFixed(1)}s，音量 ${currentVol.toFixed(1)}% 低於 ${segmentThreshold}% 持續 ${segmentTimer.value.toFixed(1)}s`)
+      console.log(`🎵 自動分段觸發：錄音 ${recordingTime.value.toFixed(1)}s，音量 ${currentVol.toFixed(1)}% 低於 ${segmentThreshold}% 持續 ${segmentTimer.value.toFixed(1)}s`)
       await processCurrentSegment()
       return
     }
   } else if (!isLowVolume) {
     // 檢測到語音，重置分段計時器
+    if (segmentTimer.value > 0) {
+      console.log(`🔄 檢測到語音，重置分段計時器 (之前: ${segmentTimer.value.toFixed(1)}s)`)
+    }
     segmentTimer.value = 0
   }
   
-  // 原有的結束邏輯 - 使用實際音量判斷
-  if (isLowVolume) {
-    silenceTimer.value += 0.1
-    
-    // 檢查是否達到靜音超時時間（完全結束錄音）
-    if (silenceTimer.value >= props.settings.silenceTimeout) {
-      // 如果有過有效語音，自動停止
-      if (hasValidSpeech.value) {
-        vadStatus.value = '靜音時間達到閾值，自動結束'
-        console.log(`🔇 音量 ${currentVol.toFixed(1)}% 靜音 ${silenceTimer.value.toFixed(1)}s 達到閾值 ${props.settings.silenceTimeout}s，完全結束錄音`)
-        stopRecording()
-        return
-      } else if (silenceTimer.value >= props.settings.silenceTimeout) {
-        // 如果一直沒有有效語音，延長一倍時間後停止
-        vadStatus.value = '未檢測到有效語音，自動結束'
-        console.log(`🔇 持續靜音 ${silenceTimer.value.toFixed(1)}s，未檢測到有效語音，自動結束`)
-        stopRecording()
-        return
-      }
-    }
-    
-    vadStatus.value = hasValidSpeech.value ? 
-      `靜音中(${currentVol.toFixed(1)}%)，${Math.max(0, props.settings.silenceTimeout - silenceTimer.value).toFixed(1)}s後結束` :
-      `等待語音輸入(${currentVol.toFixed(1)}%)... ${Math.max(0, props.settings.silenceTimeout - silenceTimer.value).toFixed(1)}s`
-  } else {
-    // 檢測到語音，重置靜音計時器
+  // 檢測到語音，重置靜音計時器
+  if (!isLowVolume) {
     silenceTimer.value = 0
     
     // 檢查是否達到最短錄音時間
-    if (recordingTime.value >= props.settings.minRecordingTime) {
+    if (recordingTime.value >= props.settings.minSegmentTime) {
       hasValidSpeech.value = true
     }
-    
-    // 顯示連續錄音剩餘時間
-    const remainingTime = Math.max(0, props.settings.maxRecordingTime - continuousRecordingTime.value)
-    const timeInfo = remainingTime <= 5 ? ` [${remainingTime.toFixed(1)}s後強制發送]` : ''
-    
-    vadStatus.value = hasValidSpeech.value ? 
-      `正在錄製語音(${currentVol.toFixed(1)}%)...${timeInfo}` : 
-      `檢測中(${currentVol.toFixed(1)}%)...${timeInfo}`
   }
+  
+  // 顯示連續錄音剩餘時間
+  const remainingTime = Math.max(0, props.settings.maxRecordingTime - continuousRecordingTime.value)
+  const timeInfo = remainingTime <= 5 ? ` [${remainingTime.toFixed(1)}s後強制發送]` : ''
+  
+  vadStatus.value = hasValidSpeech.value ? 
+    `正在錄製語音(${currentVol.toFixed(1)}%)...${timeInfo}` : 
+    `檢測中(${currentVol.toFixed(1)}%)...${timeInfo}`
 }
 
 async function stopRecording() {
@@ -534,7 +519,7 @@ function startAudioAnalysis() {
     // 調試：每50幀輸出一次音量信息
     debugCounter++
     if (debugCounter % 50 === 0) {
-      const threshold = props.settings.voiceThreshold
+      const threshold = props.settings.segmentThreshold
       console.log(`🔊 原始音量: ${average.toFixed(1)}, 標準化音量: ${normalizedVolume.toFixed(1)}%, 閾值: ${threshold}%, 數據範圍: ${Math.min(...dataArray)}-${Math.max(...dataArray)}`)
     }
     
@@ -567,7 +552,7 @@ function startAudioAnalysis() {
     currentVolume.value = smoothedVolume
     
     // 語音活動檢測 - 使用設定的閾值
-    const threshold = props.settings.voiceThreshold
+    const threshold = props.settings.segmentThreshold
     const wasVoiceDetected = isVoiceDetected.value
     isVoiceDetected.value = smoothedVolume > threshold
     
@@ -578,6 +563,7 @@ function startAudioAnalysis() {
     
     // 額外調試：每100幀輸出當前檢測狀態和分段狀態
     if (debugCounter % 100 === 0) {
+      const minSegmentTime = getMinSegmentTime()
       const segmentInfo = recordingTime.value >= minSegmentTime ? 
         `分段計時: ${segmentTimer.value.toFixed(1)}s` : 
         '未達分段時間'
@@ -615,8 +601,8 @@ async function processRecording() {
   }
   
   // 檢查最短錄音時間 - 但只在智能模式下檢查，手動模式不限制
-  if (recordingMode.value === 'smart' && recordingTime.value < props.settings.minRecordingTime) {
-    console.log(`⚠️ 智能模式錄音時間過短 (${recordingTime.value.toFixed(1)}s < ${props.settings.minRecordingTime}s)，忽略此次錄音`)
+  if (recordingMode.value === 'smart' && recordingTime.value < props.settings.minSegmentTime) {
+    console.log(`⚠️ 智能模式錄音時間過短 (${recordingTime.value.toFixed(1)}s < ${props.settings.minSegmentTime}s)，忽略此次錄音`)
     cleanup()
     return
   }
