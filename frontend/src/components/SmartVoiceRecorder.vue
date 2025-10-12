@@ -22,11 +22,11 @@
           <span v-if="!isSupported">不支援</span>
           <span v-else-if="isProcessing">處理中...</span>
           <span v-else-if="isRecording">
-            智能錄音中 {{ formatTime(recordingTime) }}
+            {{ recordingMode === 'smart' ? '智能錄音中' : '手動錄音中' }} {{ formatTime(recordingTime) }}
             <br>
-            <small>{{ vadStatus }}</small>
+            <small>{{ vadStatus || '點擊可停止錄音' }}</small>
           </span>
-          <span v-else>{{ recordingMode === 'manual' ? '點擊錄音' : '智能語音輸入' }}</span>
+          <span v-else>{{ recordingMode === 'manual' ? '點擊開始錄音' : '智能語音輸入' }}</span>
         </div>
       </div>
     </button>
@@ -128,6 +128,14 @@ const vadStatus = ref('等待語音...')
 const silenceTimer = ref(0)
 const voiceStartTime = ref(0)
 const hasValidSpeech = ref(false)
+const currentVolume = ref(0) // 當前音量百分比
+
+// 自動分段錄音相關
+const segmentTimer = ref(0)
+const isSegmentMode = ref(false)
+const segmentThreshold = 10 // 10%音量閾值用於分段
+const minSegmentTime = 1.0 // 最少錄音1秒才能分段
+const hasProcessedSegment = ref(false)
 
 // 媒體相關
 const mediaRecorder = ref<MediaRecorder | null>(null)
@@ -165,10 +173,8 @@ function checkSupport() {
 
 async function toggleRecording() {
   if (isRecording.value) {
-    if (recordingMode.value === 'manual') {
-      await stopRecording()
-    }
-    // 智能模式下會自動停止，不需要手動停止
+    // 智能模式和手動模式都允許手動停止
+    await stopRecording()
   } else {
     await startRecording()
   }
@@ -231,6 +237,10 @@ async function startRecording() {
     silenceTimer.value = 0
     hasValidSpeech.value = false
     
+    // 啟動音頻分析
+    console.log('🚀 錄音已開始，現在啟動音頻分析...')
+    startAudioAnalysis()
+    
     // 開始計時
     recordingTimer.value = window.setInterval(() => {
       recordingTime.value += 0.1
@@ -244,7 +254,9 @@ async function startRecording() {
       
       // 智能模式下的自動停止邏輯
       if (recordingMode.value === 'smart') {
-        handleSmartRecordingLogic()
+        handleSmartRecordingLogic().catch(error => {
+          console.error('❌ 智能錄音邏輯錯誤:', error)
+        })
       }
     }, 100)
     
@@ -258,26 +270,64 @@ async function startRecording() {
   }
 }
 
-function handleSmartRecordingLogic() {
-  if (!isVoiceDetected.value) {
+async function handleSmartRecordingLogic() {
+  // 在智能模式下才執行自動邏輯
+  if (recordingMode.value !== 'smart') return
+  
+  // 使用實際音量數值進行判斷
+  const currentVol = currentVolume.value
+  const isLowVolume = currentVol <= segmentThreshold // 低於10%
+  
+  // 檢查自動分段邏輯（優先處理）
+  if (recordingTime.value >= minSegmentTime && isLowVolume) {
+    segmentTimer.value += 0.1
+    
+    // 如果已經錄音超過1秒，且音量持續低於10%，則進行分段
+    if (segmentTimer.value >= 0.3 && hasValidSpeech.value) {
+      vadStatus.value = '檢測到分段點，送出音檔...'
+      console.log(`🎵 自動分段：錄音 ${recordingTime.value.toFixed(1)}s，音量 ${currentVol.toFixed(1)}% 低於 ${segmentThreshold}% 持續 ${segmentTimer.value.toFixed(1)}s`)
+      await processCurrentSegment()
+      return
+    }
+  } else if (!isLowVolume) {
+    // 檢測到語音，重置分段計時器
+    segmentTimer.value = 0
+  }
+  
+  // 原有的結束邏輯 - 使用實際音量判斷
+  if (isLowVolume) {
     silenceTimer.value += 0.1
     
-    // 如果有過有效語音且靜音時間超過閾值，自動停止
-    if (hasValidSpeech.value && silenceTimer.value >= props.settings.silenceTimeout) {
-      vadStatus.value = '靜音時間達到閾值，自動結束'
-      stopRecording()
-      return
+    // 檢查是否達到靜音超時時間（完全結束錄音）
+    if (silenceTimer.value >= props.settings.silenceTimeout) {
+      // 如果有過有效語音，自動停止
+      if (hasValidSpeech.value) {
+        vadStatus.value = '靜音時間達到閾值，自動結束'
+        console.log(`🔇 音量 ${currentVol.toFixed(1)}% 靜音 ${silenceTimer.value.toFixed(1)}s 達到閾值 ${props.settings.silenceTimeout}s，完全結束錄音`)
+        stopRecording()
+        return
+      } else if (silenceTimer.value >= props.settings.silenceTimeout * 2) {
+        // 如果一直沒有有效語音，延長一倍時間後停止
+        vadStatus.value = '未檢測到有效語音，自動結束'
+        console.log(`🔇 持續靜音 ${silenceTimer.value.toFixed(1)}s，未檢測到有效語音，自動結束`)
+        stopRecording()
+        return
+      }
     }
     
     vadStatus.value = hasValidSpeech.value ? 
-      `靜音中，${(props.settings.silenceTimeout - silenceTimer.value).toFixed(1)}s後結束` :
-      '等待語音輸入...'
+      `靜音中(${currentVol.toFixed(1)}%)，${Math.max(0, props.settings.silenceTimeout - silenceTimer.value).toFixed(1)}s後結束` :
+      `等待語音輸入(${currentVol.toFixed(1)}%)... ${Math.max(0, props.settings.silenceTimeout * 2 - silenceTimer.value).toFixed(1)}s`
   } else {
+    // 檢測到語音，重置靜音計時器
     silenceTimer.value = 0
+    
+    // 檢查是否達到最短錄音時間
     if (recordingTime.value >= props.settings.minRecordingTime) {
       hasValidSpeech.value = true
     }
-    vadStatus.value = '正在錄製語音...'
+    
+    vadStatus.value = hasValidSpeech.value ? `正在錄製語音(${currentVol.toFixed(1)}%)...` : `檢測中(${currentVol.toFixed(1)}%)...`
   }
 }
 
@@ -296,6 +346,109 @@ async function stopRecording() {
     emit('recording-end')
   }
 }
+
+// 處理自動分段
+async function processCurrentSegment() {
+  if (!mediaRecorder.value || audioChunks.value.length === 0) {
+    console.log('⚠️ 無音檔資料可分段')
+    return
+  }
+  
+  try {
+    // 暫停當前錄音器（保持stream活躍）
+    mediaRecorder.value.stop()
+    
+    // 等待ondataavailable事件完成
+    await new Promise(resolve => {
+      if (mediaRecorder.value) {
+        mediaRecorder.value.onstop = resolve
+      } else {
+        resolve(undefined)
+      }
+    })
+    
+    // 處理當前音檔段落
+    const segmentChunks = [...audioChunks.value]
+    audioChunks.value = [] // 清空準備下一段
+    
+    if (segmentChunks.length > 0) {
+      console.log('🎵 處理分段音檔...')
+      const mimeType = getSupportedMimeType()
+      const segmentBlob = new Blob(segmentChunks, { type: mimeType })
+      
+      // 異步上傳當前段落
+      uploadSegmentAudio(segmentBlob)
+    }
+    
+    // 重新開始錄音下一段
+    await restartRecordingForNextSegment()
+    
+  } catch (error) {
+    console.error('❌ 分段處理失敗:', error)
+    // 如果分段失敗，繼續正常錄音
+    await restartRecordingForNextSegment()
+  }
+}
+
+// 重新開始錄音下一段
+async function restartRecordingForNextSegment() {
+  if (!stream.value) return
+  
+  try {
+    // 建立新的 MediaRecorder
+    const mimeType = getSupportedMimeType()
+    mediaRecorder.value = new MediaRecorder(stream.value, {
+      mimeType: mimeType,
+      audioBitsPerSecond: 128000
+    })
+    
+    mediaRecorder.value.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.value.push(event.data)
+      }
+    }
+    
+    mediaRecorder.value.onstop = async () => {
+      await processRecording()
+    }
+    
+    // 重新開始錄音
+    mediaRecorder.value.start(100)
+    
+    // 重置分段相關狀態
+    segmentTimer.value = 0
+    hasValidSpeech.value = false
+    
+    console.log('🎤 開始錄音新段落')
+    
+  } catch (error) {
+    console.error('❌ 重新開始錄音失敗:', error)
+    await stopRecording()
+  }
+}
+
+// 異步上傳分段音檔
+async function uploadSegmentAudio(audioBlob: Blob) {
+  try {
+    console.log(`📤 上傳分段音檔，大小: ${(audioBlob.size / 1024).toFixed(1)} KB`)
+    
+    const result = await speechApi.upload(props.roomId, audioBlob, props.userLang)
+    console.log('✅ 分段音檔STT成功:', result)
+    
+    emit('transcript', {
+      text: result.transcript,
+      confidence: result.confidence,
+      lang: result.detected_lang
+    })
+    
+  } catch (error) {
+    console.error('❌ 分段音檔上傳失敗:', error)
+    emit('error', '分段音檔處理失敗')
+  }
+}
+
+// 音頻分析相關變量
+let debugCounter = 0
 
 function setupSmartVAD(stream: MediaStream) {
   try {
@@ -321,53 +474,102 @@ function setupSmartVAD(stream: MediaStream) {
     source.connect(volumeAnalyser.value)
     console.log('🔗 音頻源已連接到分析器')
     
-    let debugCounter = 0
-    
-    const analyzeAudio = () => {
-      if (!volumeAnalyser.value || !isRecording.value) return
-      
-      const dataArray = new Uint8Array(volumeAnalyser.value.frequencyBinCount)
-      volumeAnalyser.value.getByteFrequencyData(dataArray)
-      
-      // 使用原本有效的音量計算方式
-      const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length
-      const normalizedVolume = Math.min(100, (average / 255) * 100)
-      
-      // 調試：每50幀輸出一次音量信息
-      debugCounter++
-      if (debugCounter % 50 === 0) {
-        console.log(`🔊 原始音量: ${average.toFixed(1)}, 標準化音量: ${normalizedVolume.toFixed(1)}%, 數據範圍: ${Math.min(...dataArray)}-${Math.max(...dataArray)}`)
-      }
-      
-      // 平滑處理
-      vadSamples.value.push(normalizedVolume)
-      if (vadSamples.value.length > vadSampleSize) {
-        vadSamples.value.shift()
-      }
-      
-      const smoothedVolume = vadSamples.value.reduce((sum, val) => sum + val, 0) / vadSamples.value.length
-      volumeLevel.value = Math.min(10, Math.floor(smoothedVolume / 10))
-      
-      // 語音活動檢測
-      const threshold = props.settings.voiceThreshold
-      const wasVoiceDetected = isVoiceDetected.value
-      isVoiceDetected.value = smoothedVolume > threshold
-      
-      // 調試：語音檢測狀態改變時輸出
-      if (wasVoiceDetected !== isVoiceDetected.value) {
-        console.log(`🎙️ 語音檢測狀態變化: ${isVoiceDetected.value ? '檢測到語音' : '靜音'} (音量: ${smoothedVolume.toFixed(1)}%, 閾值: ${threshold}%)`)
-      }
-      
-      volumeAnimationFrame.value = requestAnimationFrame(analyzeAudio)
-    }
-    
-    analyzeAudio()
-    console.log('✅ 語音檢測設定完成')
+    console.log('✅ 語音檢測設定完成，等待錄音開始後啟動分析')
     
   } catch (err) {
     console.error('❌ 無法設定語音檢測:', err)
     error.value = '語音檢測設定失敗：' + err.message
   }
+}
+
+function startAudioAnalysis() {
+  if (!volumeAnalyser.value) {
+    console.error('❌ 無法啟動音頻分析：分析器未初始化')
+    return
+  }
+  
+  debugCounter = 0 // 重置計數器
+  console.log('🎯 啟動音頻分析循環...')
+  
+  const analyzeAudio = () => {
+    // 添加進入函數的LOG
+    console.log(`🎯 analyzeAudio 函數執行中... 錄音狀態: ${isRecording.value}, 分析器狀態: ${!!volumeAnalyser.value}`)
+    
+    if (!volumeAnalyser.value || !isRecording.value) {
+      console.log(`⚠️ analyzeAudio 提前返回: 分析器=${!!volumeAnalyser.value}, 錄音中=${isRecording.value}`)
+      return
+    }
+    
+    const dataArray = new Uint8Array(volumeAnalyser.value.frequencyBinCount)
+    volumeAnalyser.value.getByteFrequencyData(dataArray)
+    
+    // 使用原本有效的音量計算方式
+    const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length
+    const normalizedVolume = Math.min(100, (average / 255) * 100)
+    
+    // 調試：每50幀輸出一次音量信息
+    debugCounter++
+    if (debugCounter % 50 === 0) {
+      const threshold = props.settings.voiceThreshold
+      console.log(`🔊 原始音量: ${average.toFixed(1)}, 標準化音量: ${normalizedVolume.toFixed(1)}%, 閾值: ${threshold}%, 數據範圍: ${Math.min(...dataArray)}-${Math.max(...dataArray)}`)
+    }
+    
+    // 每5幀輸出基本狀態確認analyzeAudio在運行
+    if (debugCounter % 5 === 0) {
+      console.log(`🔄 analyzeAudio 第${debugCounter}幀: 平均音量=${average.toFixed(1)}, 標準化=${normalizedVolume.toFixed(1)}%`)
+    }
+    
+    // 平滑處理 - 添加詳細LOG
+    vadSamples.value.push(normalizedVolume)
+    if (vadSamples.value.length > vadSampleSize) {
+      vadSamples.value.shift()
+    }
+    
+    const smoothedVolume = vadSamples.value.reduce((sum, val) => sum + val, 0) / vadSamples.value.length
+    
+    // 詳細調試LOG - 每20幀輸出平滑處理詳情
+    if (debugCounter % 20 === 0) {
+      console.log(`🔍 平滑處理詳情:`)
+      console.log(`  - 原始音量: ${normalizedVolume.toFixed(2)}%`)
+      console.log(`  - 樣本數組: [${vadSamples.value.map(v => v.toFixed(1)).join(', ')}]`)
+      console.log(`  - 樣本數量: ${vadSamples.value.length}/${vadSampleSize}`)
+      console.log(`  - 樣本總和: ${vadSamples.value.reduce((sum, val) => sum + val, 0).toFixed(2)}`)
+      console.log(`  - 平滑後音量: ${smoothedVolume.toFixed(2)}%`)
+      console.log(`  - 音量條等級: ${volumeLevel.value}/10`)
+    }
+    volumeLevel.value = Math.min(10, Math.floor(smoothedVolume / 10))
+    
+    // 更新當前音量
+    currentVolume.value = smoothedVolume
+    
+    // 語音活動檢測 - 使用設定的閾值
+    const threshold = props.settings.voiceThreshold
+    const wasVoiceDetected = isVoiceDetected.value
+    isVoiceDetected.value = smoothedVolume > threshold
+    
+    // 調試：語音檢測狀態改變時輸出
+    if (wasVoiceDetected !== isVoiceDetected.value) {
+      console.log(`🎙️ 語音檢測狀態變化: ${isVoiceDetected.value ? '檢測到語音' : '靜音'} (平滑音量: ${smoothedVolume.toFixed(1)}%, 設定閾值: ${threshold}%)`)
+    }
+    
+    // 額外調試：每100幀輸出當前檢測狀態和分段狀態
+    if (debugCounter % 100 === 0) {
+      const segmentInfo = recordingTime.value >= minSegmentTime ? 
+        `分段計時: ${segmentTimer.value.toFixed(1)}s` : 
+        '未達分段時間'
+      console.log(`📊 當前狀態: 音量=${smoothedVolume.toFixed(1)}%, 閾值=${threshold}%, 檢測=${isVoiceDetected.value ? '有語音' : '靜音'}, 錄音時間=${recordingTime.value.toFixed(1)}s, ${segmentInfo}`)
+    }
+    
+    volumeAnimationFrame.value = requestAnimationFrame(analyzeAudio)
+    
+    // 確認下一幀已安排
+    if (debugCounter % 10 === 0) {
+      console.log(`🔄 已安排下一幀分析: ${volumeAnimationFrame.value}`)
+    }
+  }
+  
+  // 開始分析
+  analyzeAudio()
 }
 
 function stopVolumeAnalysis() {
@@ -388,12 +590,14 @@ async function processRecording() {
     return
   }
   
-  // 檢查最短錄音時間
-  if (recordingTime.value < props.settings.minRecordingTime) {
-    console.log(`⚠️ 錄音時間過短 (${recordingTime.value.toFixed(1)}s)，忽略此次錄音`)
+  // 檢查最短錄音時間 - 但只在智能模式下檢查，手動模式不限制
+  if (recordingMode.value === 'smart' && recordingTime.value < props.settings.minRecordingTime) {
+    console.log(`⚠️ 智能模式錄音時間過短 (${recordingTime.value.toFixed(1)}s < ${props.settings.minRecordingTime}s)，忽略此次錄音`)
     cleanup()
     return
   }
+  
+  console.log(`✅ 錄音時間符合要求 (${recordingTime.value.toFixed(1)}s)，開始處理音檔`)
   
   try {
     isProcessing.value = true
@@ -474,6 +678,11 @@ function cleanup() {
   silenceTimer.value = 0
   hasValidSpeech.value = false
   vadStatus.value = '等待語音...'
+  
+  // 重置分段相關狀態
+  segmentTimer.value = 0
+  isSegmentMode.value = false
+  hasProcessedSegment.value = false
 }
 
 // 完全清理資源（僅在組件卸載時調用）

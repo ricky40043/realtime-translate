@@ -12,7 +12,7 @@
       <div class="user-controls">
         <div class="user-info">
           <span class="user-name">{{ userSettings.displayName || '未設定' }}</span>
-          <span class="lang-info">{{ inputLang }} → {{ outputLang }}</span>
+          <span class="lang-info">{{ getLanguageName(inputLang) }} → {{ getLanguageName(outputLang) }}</span>
         </div>
         <button @click="openSettings" class="settings-btn" title="個人設定">
           ⚙️
@@ -495,6 +495,53 @@ function handleRecordingStart() {
 function handleRecordingEnd() {
   console.log('⏹️ 結束智能錄音')
   isRecording.value = false
+}
+
+// 語言代碼轉換為顯示名稱
+function getLanguageName(langCode: string): string {
+  const languageMap: Record<string, string> = {
+    // 輸入語言 (語音識別)
+    'zh-TW': '繁體中文',
+    'zh-CN': '簡體中文', 
+    'en-US': 'English',
+    'ja-JP': '日本語',
+    'ko-KR': '한국어',
+    'es-ES': 'Español',
+    'fr-FR': 'Français',
+    'de-DE': 'Deutsch',
+    'it-IT': 'Italiano',
+    'pt-PT': 'Português',
+    'ru-RU': 'Русский',
+    'ar-SA': 'العربية',
+    'hi-IN': 'हिन्दी',
+    'th-TH': 'ไทย',
+    'vi-VN': 'Tiếng Việt',
+    'my-MM': 'မြန်မာ',
+    'id-ID': 'Bahasa Indonesia',
+    'ms-MY': 'Bahasa Melayu',
+    
+    // 輸出語言 (翻譯)
+    'zh': '繁體中文',
+    'en': 'English',
+    'ja': '日本語',
+    'ko': '한국어',
+    'es': 'Español',
+    'fr': 'Français',
+    'de': 'Deutsch',
+    'it': 'Italiano',
+    'pt': 'Português',
+    'ru': 'Русский',
+    'ar': 'العربية',
+    'hi': 'हिन्दी',
+    'th': 'ไทย',
+    'vi': 'Tiếng Việt',
+    'my': 'မြန်မာ',
+    'id': 'Bahasa Indonesia',
+    'ms': 'Bahasa Melayu',
+    'yue': '廣東話'
+  }
+  
+  return languageMap[langCode] || langCode
 }
 </script>
 
