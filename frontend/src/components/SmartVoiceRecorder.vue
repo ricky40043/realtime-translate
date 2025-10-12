@@ -53,17 +53,17 @@
         <div class="vad-status" :class="{ active: isVoiceDetected }">
           {{ isVoiceDetected ? '🎙️ 檢測到語音' : '🔇 靜音中' }}
         </div>
-        <div class="silence-timer" v-if="!isVoiceDetected && silenceTimer > 0">
+        <!-- <div class="silence-timer" v-if="!isVoiceDetected && silenceTimer > 0">
           靜音 {{ (settings.silenceTimeout - silenceTimer).toFixed(1) }}s
         </div>
         <div class="auto-stop-info" v-if="recordingTime >= settings.maxRecordingTime - 5">
           將在 {{ (settings.maxRecordingTime - recordingTime).toFixed(0) }}s 後自動結束
-        </div>
+        </div> -->
       </div>
     </div>
     
     <!-- 錄音模式切換 -->
-    <div class="mode-selector">
+    <!-- <div class="mode-selector">
       <button 
         @click="recordingMode = 'smart'"
         :class="['mode-btn', { active: recordingMode === 'smart' }]"
@@ -76,7 +76,7 @@
       >
         👆 手動模式
       </button>
-    </div>
+    </div> -->
     
     <!-- 錯誤訊息 -->
     <div v-if="error" class="error-message">
@@ -136,6 +136,9 @@ const isSegmentMode = ref(false)
 const segmentThreshold = 10 // 10%音量閾值用於分段
 const minSegmentTime = 1.0 // 最少錄音1秒才能分段
 const hasProcessedSegment = ref(false)
+
+// 最長錄音時間相關
+const continuousRecordingTime = ref(0) // 連續錄音時間（會在發送後重置）
 
 // 媒體相關
 const mediaRecorder = ref<MediaRecorder | null>(null)
@@ -244,11 +247,22 @@ async function startRecording() {
     // 開始計時
     recordingTimer.value = window.setInterval(() => {
       recordingTime.value += 0.1
+      continuousRecordingTime.value += 0.1
       
-      // 檢查最長錄音時間
-      if (recordingTime.value >= props.settings.maxRecordingTime) {
-        vadStatus.value = '達到最長錄音時間'
-        stopRecording()
+      // 檢查連續錄音最長時間（不間斷講話的限制）
+      if (continuousRecordingTime.value >= props.settings.maxRecordingTime) {
+        vadStatus.value = '連續錄音達到最長時間，強制發送'
+        console.log(`⏰ 連續錄音 ${continuousRecordingTime.value.toFixed(1)}s 達到最長時間 ${props.settings.maxRecordingTime}s，強制分段`)
+        if (recordingMode.value === 'smart') {
+          // 智能模式強制分段
+          processCurrentSegment().catch(error => {
+            console.error('❌ 強制分段失敗:', error)
+            stopRecording()
+          })
+        } else {
+          // 手動模式強制結束
+          stopRecording()
+        }
         return
       }
       
@@ -283,7 +297,7 @@ async function handleSmartRecordingLogic() {
     segmentTimer.value += 0.1
     
     // 如果已經錄音超過1秒，且音量持續低於10%，則進行分段
-    if (segmentTimer.value >= 0.3 && hasValidSpeech.value) {
+    if (segmentTimer.value >= 1 && hasValidSpeech.value && continuousRecordingTime.value > props.settings.minRecordingTime) {
       vadStatus.value = '檢測到分段點，送出音檔...'
       console.log(`🎵 自動分段：錄音 ${recordingTime.value.toFixed(1)}s，音量 ${currentVol.toFixed(1)}% 低於 ${segmentThreshold}% 持續 ${segmentTimer.value.toFixed(1)}s`)
       await processCurrentSegment()
@@ -306,7 +320,7 @@ async function handleSmartRecordingLogic() {
         console.log(`🔇 音量 ${currentVol.toFixed(1)}% 靜音 ${silenceTimer.value.toFixed(1)}s 達到閾值 ${props.settings.silenceTimeout}s，完全結束錄音`)
         stopRecording()
         return
-      } else if (silenceTimer.value >= props.settings.silenceTimeout * 2) {
+      } else if (silenceTimer.value >= props.settings.silenceTimeout) {
         // 如果一直沒有有效語音，延長一倍時間後停止
         vadStatus.value = '未檢測到有效語音，自動結束'
         console.log(`🔇 持續靜音 ${silenceTimer.value.toFixed(1)}s，未檢測到有效語音，自動結束`)
@@ -317,7 +331,7 @@ async function handleSmartRecordingLogic() {
     
     vadStatus.value = hasValidSpeech.value ? 
       `靜音中(${currentVol.toFixed(1)}%)，${Math.max(0, props.settings.silenceTimeout - silenceTimer.value).toFixed(1)}s後結束` :
-      `等待語音輸入(${currentVol.toFixed(1)}%)... ${Math.max(0, props.settings.silenceTimeout * 2 - silenceTimer.value).toFixed(1)}s`
+      `等待語音輸入(${currentVol.toFixed(1)}%)... ${Math.max(0, props.settings.silenceTimeout - silenceTimer.value).toFixed(1)}s`
   } else {
     // 檢測到語音，重置靜音計時器
     silenceTimer.value = 0
@@ -327,7 +341,13 @@ async function handleSmartRecordingLogic() {
       hasValidSpeech.value = true
     }
     
-    vadStatus.value = hasValidSpeech.value ? `正在錄製語音(${currentVol.toFixed(1)}%)...` : `檢測中(${currentVol.toFixed(1)}%)...`
+    // 顯示連續錄音剩餘時間
+    const remainingTime = Math.max(0, props.settings.maxRecordingTime - continuousRecordingTime.value)
+    const timeInfo = remainingTime <= 5 ? ` [${remainingTime.toFixed(1)}s後強制發送]` : ''
+    
+    vadStatus.value = hasValidSpeech.value ? 
+      `正在錄製語音(${currentVol.toFixed(1)}%)...${timeInfo}` : 
+      `檢測中(${currentVol.toFixed(1)}%)...${timeInfo}`
   }
 }
 
@@ -418,6 +438,10 @@ async function restartRecordingForNextSegment() {
     // 重置分段相關狀態
     segmentTimer.value = 0
     hasValidSpeech.value = false
+    
+    // 重置連續錄音時間（因為已經發送了音檔）
+    continuousRecordingTime.value = 0
+    console.log('🔄 連續錄音時間已重置，開始新的連續錄音計時')
     
     console.log('🎤 開始錄音新段落')
     
@@ -683,6 +707,9 @@ function cleanup() {
   segmentTimer.value = 0
   isSegmentMode.value = false
   hasProcessedSegment.value = false
+  
+  // 重置連續錄音時間
+  continuousRecordingTime.value = 0
 }
 
 // 完全清理資源（僅在組件卸載時調用）

@@ -119,7 +119,7 @@
                 v-model.number="localSettings.minRecordingTime"
                 type="range"
                 min="0.5"
-                max="3"
+                max="10"
                 step="0.5"
                 class="form-range"
               />
@@ -134,8 +134,8 @@
               <input
                 v-model.number="localSettings.maxRecordingTime"
                 type="range"
-                min="10"
-                max="60"
+                min="5"
+                max="30"
                 class="form-range"
               />
               <p class="form-help">超過此時間自動結束錄音</p>
@@ -223,7 +223,7 @@ const defaultSettings: AdvancedSettings = {
   outputLang: 'zh-TW',
   voiceThreshold: 10,
   silenceTimeout: 5,
-  minRecordingTime: 1,
+  minRecordingTime: 3,
   maxRecordingTime: 30
 }
 

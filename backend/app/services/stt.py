@@ -19,7 +19,8 @@ class STTService:
         self.azure_region = os.getenv("AZURE_SPEECH_REGION")
         
         # 檢查是否需要使用模擬模式
-        self.use_mock = self._should_use_mock()
+        self.use_mock = False
+        # self.use_mock = self._should_use_mock()
     
     async def transcribe_audio(self, audio_data: bytes, content_type: str = "audio/webm", 
                              language_code: str = "zh-TW") -> Dict:

@@ -7,6 +7,7 @@
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks
 from pydantic import BaseModel
 import asyncpg
+import re
 from ..deps import get_db, get_current_user
 from ..db.repo import MessageRepo, RoomRepo
 from ..services.stt import stt_service
@@ -15,6 +16,98 @@ from ..services.router import LanguageRouter
 from ..ws.hub import manager
 
 router = APIRouter()
+
+def filter_ai_default_responses(text: str) -> str:
+    """
+    過濾AI語音辨識模型在無聲音時的預設回應
+    這些回應通常出現在空檔案或無聲音檔案的辨識結果中
+    """
+    print(f"🔍 原始辨識結果: '{text}'")
+    if not text or not text.strip():
+        return ""
+    
+    text_cleaned = text.strip()
+    
+    # 定義需要過濾的完整匹配字串（繁體和簡體都包含）
+    exact_filter_list = [
+        # 明鏡相關 - 繁體
+        "請不吝點贊 訂閱 轉發 打賞支持明鏡與點點欄目",
+        "謝謝大家",
+        "明鏡與點點欄目",
+        
+        # 明鏡相關 - 簡體  
+        "请不吝点赞 订阅 转发 打赏支持明镜与点点栏目",
+        "谢谢大家",
+        "明镜与点点栏目",
+        
+        # 其他常見結束語
+        "感謝收看",
+        "感谢收看", 
+        "下次再見",
+        "下次再见",
+        "記得訂閱",
+        "记得订阅",
+        "按讚分享",
+        "按赞分享",
+        "支持頻道",
+        "支持频道",
+    ]
+    
+    # 完整匹配檢查
+    for filter_text in exact_filter_list:
+        if text_cleaned == filter_text:
+            print(f"🚫 完整匹配過濾: '{text_cleaned}'")
+            return ""
+    
+    # # 定義需要過濾的模糊匹配模式
+    # filter_patterns = [
+    #     # 包含明鏡相關關鍵字的句子
+    #     r".*點贊.*訂閱.*轉發.*打賞.*明鏡.*",
+    #     r".*点赞.*订阅.*转发.*打赏.*明镜.*",
+    #     r".*支持.*明鏡.*點點.*欄目.*",
+    #     r".*支持.*明镜.*点点.*栏目.*",
+        
+    #     # 其他常見的AI預設回應
+    #     r".*字幕.*製作.*",
+    #     r".*字幕.*制作.*",
+    #     r".*影片.*結束.*",
+    #     r".*影片.*结束.*",
+    #     r"^\.+$",  # 只有句號
+    #     r"^，+$",  # 只有逗號
+    #     r"^。+$",  # 只有句號（中文）
+    #     r"^\s*$",  # 只有空白
+        
+    #     # 常見的無意義單字輸出
+    #     r"^你$",
+    #     r"^好$", 
+    #     r"^嗯$",
+    #     r"^啊$",
+    #     r"^呃$",
+    #     r"^這個$",
+    #     r"^那個$",
+    #     r"^这个$",
+    #     r"^那个$",
+    # ]
+    
+    # # 檢查是否匹配任何過濾模式
+    # for pattern in filter_patterns:
+    #     if re.match(pattern, text_cleaned, re.IGNORECASE):
+    #         print(f"🚫 模式匹配過濾: '{text_cleaned}' (匹配模式: {pattern})")
+    #         return ""
+    
+    # # 檢查長度過短的回應（少於3個字符的可能是無意義輸出）
+    # if len(text_cleaned) <= 2:
+    #     print(f"🚫 過濾過短回應: '{text_cleaned}'")
+    #     return ""
+    
+    # # 檢查是否全是重複字符
+    # if len(set(text_cleaned)) <= 1:
+    #     print(f"🚫 過濾重複字符: '{text_cleaned}'")
+    #     return ""
+        
+    print(f"✅ 通過過濾檢查: '{text_cleaned}'")
+        
+    return text_cleaned
 
 class STTResponse(BaseModel):
     transcript_id: str
@@ -80,8 +173,14 @@ async def speech_to_text_only(
         confidence = stt_result["confidence"]
         detected_lang = stt_result.get("language", language_code)
         
+        # 過濾AI語音辨識模型的預設回應
+        print(f"🔍 原始辨識結果: '{transcript}'")
+        transcript = filter_ai_default_responses(transcript)
+        print(f"🔍 過濾後結果: '{transcript}'")
+        
         if not transcript:
-            raise HTTPException(status_code=400, detail="Could not transcribe audio")
+            print(f"⚠️ 辨識結果被過濾或為空，跳過處理")
+            # raise HTTPException(status_code=204, detail="No valid transcript after filtering")
         
         # 生成 transcript ID 並暫存結果
         import uuid
