@@ -114,7 +114,8 @@ async def process_speech_translation(
     room_id: str, 
     speaker_id: str, 
     text: str, 
-    source_lang: str
+    source_lang: str,
+    speaker_name: str = None
 ):
     """背景處理語音轉文字的翻譯和廣播"""
     print(f"🔄 process_speech_translation 開始執行...")
@@ -162,7 +163,7 @@ async def process_speech_translation(
             # 廣播給個人視圖和主板視圖
             await broadcast_speech_translations(
                 room_id, speaker_id, message_id, text, source_lang, 
-                translations, online_users, db
+                translations, online_users, db, speaker_name
             )
             
             print(f"✅ process_speech_translation 完成執行")
@@ -174,16 +175,20 @@ async def process_speech_translation(
 
 async def broadcast_speech_translations(
     room_id: str, speaker_id: str, message_id: str, original_text: str, 
-    source_lang: str, translations: dict, online_users: list, db: asyncpg.Connection
+    source_lang: str, translations: dict, online_users: list, db: asyncpg.Connection,
+    speaker_name: str = None
 ):
     """廣播語音轉文字的翻譯結果"""
     try:
         from ..db.repo import UserRepo
         user_repo = UserRepo(db)
         
-        # 取得講者資訊
-        speaker = await user_repo.get_user(speaker_id)
-        speaker_name = speaker["display_name"] if speaker else "Unknown"
+        # 優先使用傳入的speaker_name，否則從資料庫取得
+        if not speaker_name:
+            speaker = await user_repo.get_user(speaker_id)
+            speaker_name = speaker["display_name"] if speaker else "Unknown"
+        
+        print(f"📝 使用講者名稱: '{speaker_name}'（來源: {'前端' if speaker_name else '資料庫'}）")
         
         # 計算語言路由
         lang_router = LanguageRouter(db)
@@ -230,7 +235,7 @@ async def broadcast_speech_translations(
                 "type": "board.post",
                 "messageId": message_id,
                 "speakerId": speaker_id,
-                "speakerName": speaker["display_name"],
+                "speakerName": speaker_name,  # 使用傳入的speaker_name而不是資料庫的display_name
                 "targetLang": speaker_output_lang,
                 "text": speaker_board_text,
                 "sourceLang": source_lang,
@@ -249,6 +254,7 @@ async def upload_speech(
     background_tasks: BackgroundTasks,
     room_id: str = Form(...),
     language_code: str = Form("zh-TW"),
+    speaker_name: str = Form(None),
     audio: UploadFile = File(...),
     current_user: str = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db)
@@ -329,7 +335,7 @@ async def upload_speech(
         background_tasks.add_task(
             process_speech_translation,
             message_id, room_id, current_user, 
-            transcript, detected_lang
+            transcript, detected_lang, speaker_name
         )
         
         return SpeechResponse(

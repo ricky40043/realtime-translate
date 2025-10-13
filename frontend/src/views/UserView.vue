@@ -51,6 +51,7 @@
           :room-id="roomId"
           :user-lang="inputLang"
           :settings="userSettings"
+          :speaker-name="userSettings.displayName"
           :disabled="!sessionStore.isConnected"
           @transcript="handleTranscript"
           @error="handleVoiceError"

@@ -16,12 +16,15 @@ export const speechApi = {
   /**
    * 上傳語音文件進行處理
    */
-  async upload(roomId: string, audioBlob: Blob, userLang?: string): Promise<any> {
+  async upload(roomId: string, audioBlob: Blob, userLang?: string, speakerName?: string): Promise<any> {
     const formData = new FormData()
     formData.append('audio', audioBlob, 'audio.webm')
     formData.append('room_id', roomId)
     if (userLang) {
-      formData.append('user_lang', userLang)
+      formData.append('language_code', userLang)
+    }
+    if (speakerName) {
+      formData.append('speaker_name', speakerName)
     }
 
     const response = await fetch(`${API_BASE}/speech/upload`, {

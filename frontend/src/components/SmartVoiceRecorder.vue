@@ -102,6 +102,7 @@ interface Props {
   disabled?: boolean
   userLang?: string
   settings: SmartSettings
+  speakerName?: string
 }
 
 interface Emits {
@@ -469,7 +470,8 @@ async function uploadSegmentAudio(audioBlob: Blob) {
   try {
     console.log(`📤 上傳分段音檔，大小: ${(audioBlob.size / 1024).toFixed(1)} KB`)
     
-    const result = await speechApi.upload(props.roomId, audioBlob, props.userLang)
+    const displayName = getSpeakerName()
+    const result = await speechApi.upload(props.roomId, audioBlob, props.userLang, displayName)
     console.log('✅ 分段音檔STT成功:', result)
     
     emit('transcript', {
@@ -664,7 +666,9 @@ async function uploadAudio(audioBlob: Blob) {
     throw new Error('未登入')
   }
   
-  const result = await speechApi.upload(props.roomId, audioBlob, props.userLang)
+  // 從emit事件中獲取displayName
+  const displayName = getSpeakerName()
+  const result = await speechApi.upload(props.roomId, audioBlob, props.userLang, displayName)
   console.log('✅ STT 成功:', result)
   
   emit('transcript', {
@@ -742,6 +746,10 @@ function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
   return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+function getSpeakerName(): string {
+  return props.speakerName || '未知用戶'
 }
 </script>
 
