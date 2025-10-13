@@ -46,7 +46,7 @@
             }"
           ></div>
         </div>
-        <div class="threshold-line" :style="{ left: `${(settings.segmentThreshold / 30) * 100}%` }"></div>
+        <!-- <div class="threshold-line" :style="{ left: `${(settings.segmentThreshold / 30) * 100}%` }"></div> -->
       </div>
       
       <div class="vad-info">
