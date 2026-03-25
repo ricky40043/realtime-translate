@@ -45,6 +45,7 @@
                 <option value="my-MM">မြန်မာ (緬甸文)</option>
                 <option value="id-ID">Bahasa Indonesia (印尼文)</option>
                 <option value="ms-MY">Bahasa Melayu (馬來文)</option>
+                <option value="yue">廣東話</option>
               </select>
               <p class="form-help">您說話時使用的語言</p>
             </div>

@@ -30,7 +30,7 @@ export default defineConfig({
     // 允許外部 host 訪問
     cors: true,
     // 允許的 host
-    allowedHosts: ['localhost', '078d65d85847.ngrok-free.app', '.ngrok-free.app'],
+    allowedHosts: ['localhost', '078d65d85847.ngrok-free.app', '.ngrok-free.app', '*'],
     // API 代理配置
     proxy: {
       '/api': {
