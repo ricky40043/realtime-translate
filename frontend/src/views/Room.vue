@@ -252,9 +252,8 @@ async function connectWebSocket() {
   
   try {
     // 使用當前頁面的協議和主機
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsHost = window.location.host
-    const wsUrl = `${wsProtocol}//${wsHost}/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
+    const baseWsUrl = import.meta.env.VITE_WS_URL || (() => { const p = window.location.protocol === 'https:' ? 'wss:' : 'ws:'; return `${p}//${window.location.host}/ws`; })();
+    const wsUrl = `${baseWsUrl}?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
     // WebSocket 功能已移除，翻譯測試頁面不需要
   } catch (error) {
     console.error('Connect WebSocket failed:', error)

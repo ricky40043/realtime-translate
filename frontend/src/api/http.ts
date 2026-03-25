@@ -1,6 +1,6 @@
 // API 基礎地址配置
 // 使用相對路徑 /api，通過 Vite 代理到後端
-const API_BASE = '/api'
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 console.log('🔗 API_BASE:', API_BASE)
 

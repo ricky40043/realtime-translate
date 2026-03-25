@@ -236,9 +236,8 @@ async function connectWebSocket() {
   
   try {
     // 自動檢測 WebSocket 地址：使用當前頁面的協議和主機
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsHost = window.location.host
-    const wsUrl = `${wsProtocol}//${wsHost}/ws?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
+    const baseWsUrl = import.meta.env.VITE_WS_URL || (() => { const p = window.location.protocol === 'https:' ? 'wss:' : 'ws:'; return `${p}//${window.location.host}/ws`; })();
+    const wsUrl = `${baseWsUrl}?roomId=${roomId.value}&userId=${sessionStore.user.id}&token=${sessionStore.token}`
     ws.value = new WebSocket(wsUrl)
     
     ws.value.onopen = () => {
