@@ -1,5 +1,5 @@
 // 統一的 API 基礎地址
-const API_BASE = '/api'
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 // 獲取認證 token
 const getAuthToken = () => localStorage.getItem('token') || ''
