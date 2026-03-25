@@ -1,28 +1,18 @@
 """
 免費翻譯服務
-使用 Google Translate 的公開介面（無需 API 金鑰）
-基於 requests 和 BeautifulSoup
+使用 deep-translator 的公開介面（無需 API 金鑰）
 """
 
 import asyncio
 import time
-import requests
-import json
-import re
 from typing import Dict, List, Optional
-from urllib.parse import quote
+from deep_translator import GoogleTranslator
 
-print("✅ 使用基於 requests 的免費 Google Translate 服務")
+print("✅ 使用基於 deep-translator 的免費 Google Translate 服務")
 
 class FreeTranslateService:
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        })
-        
-        # Google Translate 免費介面的 URL
-        self.translate_url = "https://translate.googleapis.com/translate_a/single"
+        pass
     
     async def translate_text(self, text: str, target_lang: str, source_lang: Optional[str] = None) -> Dict:
         """翻譯文字"""
@@ -31,20 +21,24 @@ class FreeTranslateService:
         try:
             # 轉換語言代碼
             target_code = self._convert_lang_code(target_lang)
-            source_code = self._convert_lang_code(source_lang) if source_lang else 'auto'
+            source_code = 'auto'  # 強制使用 auto 讓 Google 自動檢測語言，避免 STT 誤判導致翻譯失敗
             
-            # 使用免費的 Google Translate API
-            result = await self._google_translate_free(text, target_code, source_code)
+            # 使用 deep-translator 進行翻譯（它內部會處理分段和各種 URL 問題）
+            loop = asyncio.get_event_loop()
+            translated_text = await loop.run_in_executor(
+                None,
+                lambda: GoogleTranslator(source=source_code, target=target_code).translate(text)
+            )
             
             latency_ms = int((time.time() - start_time) * 1000)
             
             return {
-                "text": result["text"],
-                "source_lang": result.get("source_lang", source_lang),
+                "text": translated_text,
+                "source_lang": "auto",
                 "target_lang": target_lang,
                 "latency_ms": latency_ms,
-                "quality": result.get("quality", 0.9),
-                "provider": "free_google"
+                "quality": 0.9,
+                "provider": "free_google_deep_translator"
             }
             
         except Exception as e:
@@ -52,121 +46,13 @@ class FreeTranslateService:
             # 回退到模擬翻譯
             return await self._mock_translate(text, target_lang, source_lang)
     
-    async def _google_translate_free(self, text: str, target_code: str, source_code: str) -> Dict:
-        """使用免費的 Google Translate API"""
-        loop = asyncio.get_event_loop()
-        
-        # 分段處理長文字
-        max_length = 4500
-        if len(text) <= max_length:
-            result = await loop.run_in_executor(
-                None,
-                self._translate_single_chunk,
-                text, target_code, source_code
-            )
-            return result
-        else:
-            # 分段翻譯長文字
-            chunks = []
-            detected_lang = source_code
-            
-            for i in range(0, len(text), max_length):
-                chunk = text[i:i + max_length]
-                result = await loop.run_in_executor(
-                    None,
-                    self._translate_single_chunk,
-                    chunk, target_code, source_code
-                )
-                chunks.append(result["text"])
-                if i == 0:  # 使用第一段的檢測語言
-                    detected_lang = result.get("source_lang", source_code)
-            
-            return {
-                "text": "".join(chunks),
-                "source_lang": detected_lang,
-                "quality": 0.9
-            }
-    
-    def _translate_single_chunk(self, text: str, target_code: str, source_code: str) -> Dict:
-        """翻譯單個文字段落"""
-        try:
-            params = {
-                'client': 'gtx',
-                'sl': source_code,
-                'tl': target_code,
-                'dt': 't',
-                'q': text
-            }
-            
-            response = self.session.get(self.translate_url, params=params, timeout=10)
-            response.raise_for_status()
-            
-            # 解析回應
-            result = response.json()
-            
-            if result and len(result) > 0 and result[0]:
-                # 組合翻譯結果
-                translated_text = ""
-                for item in result[0]:
-                    if item and len(item) > 0:
-                        translated_text += item[0]
-                
-                # 檢測到的源語言
-                detected_lang = source_code
-                if len(result) > 2 and result[2]:
-                    detected_lang = result[2]
-                
-                return {
-                    "text": translated_text,
-                    "source_lang": detected_lang,
-                    "quality": 0.9
-                }
-            else:
-                raise Exception("無效的翻譯回應")
-                
-        except Exception as e:
-            print(f"Google Translate 免費服務錯誤: {e}")
-            # 使用簡單的詞彙替換作為後備
-            return {
-                "text": self._simple_word_replace(text, target_code),
-                "source_lang": source_code,
-                "quality": 0.5
-            }
-    
-    def _simple_word_replace(self, text: str, target_code: str) -> str:
-        """簡單的詞彙替換（作為後備方案）"""
-        # 基本詞彙對照表
-        translations = {
-            "zh": {
-                "hello": "你好", "thank you": "謝謝", "goodbye": "再見",
-                "yes": "是", "no": "不", "please": "請", "sorry": "對不起",
-                "good": "好", "bad": "壞", "big": "大", "small": "小"
-            },
-            "en": {
-                "你好": "hello", "謝謝": "thank you", "再見": "goodbye",
-                "是": "yes", "不": "no", "請": "please", "對不起": "sorry",
-                "好": "good", "壞": "bad", "大": "big", "小": "small"
-            }
-        }
-        
-        # 簡化的語言代碼
-        simple_target = target_code.split('-')[0]
-        
-        if simple_target in translations:
-            result_text = text
-            for source_word, target_word in translations[simple_target].items():
-                result_text = result_text.replace(source_word, target_word)
-            return result_text
-        
-        return f"[翻譯為{target_code}] {text}"
-    
     async def batch_translate(self, text: str, target_langs: List[str], source_lang: Optional[str] = None) -> Dict[str, Dict]:
         """批次翻譯到多個目標語言"""
         tasks = []
         for target_lang in target_langs:
-            if target_lang != source_lang:  # 跳過相同語言
-                task = self.translate_text(text, target_lang, source_lang)
-                tasks.append((target_lang, task))
+            # 即使 target_lang 和 source_lang 相同也嘗試翻譯，因為 source_lang 有可能是錯的
+            task = self.translate_text(text, target_lang, source_lang)
+            tasks.append((target_lang, task))
         
         results = {}
         if tasks:
@@ -182,35 +68,24 @@ class FreeTranslateService:
                         "latency_ms": 0,
                         "quality": 0.0,
                         "error": str(result),
-                        "provider": f"free_{self.engine}"
+                        "provider": "free_google_deep_translator"
                     }
                 else:
                     results[target_lang] = result
         
-        # 原語言直接回傳原文
-        if source_lang and source_lang in target_langs:
-            results[source_lang] = {
-                "text": text,
-                "source_lang": source_lang,
-                "target_lang": source_lang,
-                "latency_ms": 0,
-                "quality": 1.0,
-                "provider": f"free_{self.engine}"
-            }
-        
         return results
     
     def _convert_lang_code(self, lang_code: str) -> str:
-        """轉換語言代碼格式"""
+        """轉換語言代碼格式為 deep-translator (Google) 支援的格式"""
         if not lang_code:
             return "auto"
         
-        # 免費翻譯服務語言代碼對映
+        # 對應表
         lang_mapping = {
-            "zh-TW": "zh-tw",
-            "zh-CN": "zh-cn",
-            "zh": "zh-cn",
-            "Chinese": "zh-cn",  # 修復：添加 Chinese 對映
+            "zh-TW": "zh-TW",  # google translator 支援繁體
+            "zh-CN": "zh-CN",
+            "zh": "zh-CN",
+            "Chinese": "zh-CN",
             "english": "en",
             "English": "en",
             "en": "en",
@@ -229,13 +104,9 @@ class FreeTranslateService:
             "de": "de",
             "german": "de",
             "German": "de",
-            "it": "it",
-            "pt": "pt",
-            "ru": "ru",
-            "ar": "ar",
-            "hi": "hi",
-            "th": "th",
-            "vi": "vi"
+            "my": "my",        # 緬甸文
+            "burmese": "my",
+            "Burmese": "my"
         }
         
         return lang_mapping.get(lang_code, lang_code)
