@@ -155,9 +155,10 @@ onMounted(async () => {
   // 每次都進行新的匿名登入，確保每個分頁有不同的用戶ID
   await performGuestLogin()
   
-  // 載入用戶語言設定
+  // 載入用戶語言設定，並將偏好語言同步回後端（新用戶每次建立時需要）
   loadUserSettings()
-  
+  await updateSettings()
+
   // 載入房間資料並連線
   await loadRoom()
   await connectWebSocket()
@@ -346,16 +347,19 @@ function loadUserSettings() {
     console.log('📝 從 localStorage 載入進階設定:', advanced)
   }
   
-  // 優先使用 sessionStore 中的用戶語言設定（確保用戶隔離）
-  if (sessionStore.user?.inputLang) {
-    inputLang.value = sessionStore.user.inputLang
-    userSettings.value.inputLang = sessionStore.user.inputLang
-    console.log(`📝 從 session 載入慣用語設定: ${inputLang.value}`)
-  }
-  if (sessionStore.user?.outputLang) {
-    outputLang.value = sessionStore.user.outputLang
-    userSettings.value.outputLang = sessionStore.user.outputLang
-    console.log(`📝 從 session 載入主板語言設定: ${outputLang.value}`)
+  // 只有在 localStorage 沒有保存設定時，才從 session 載入語言（避免覆蓋用戶偏好）
+  const hasLocalStorageSettings = !!localStorage.getItem('userAdvancedSettings')
+  if (!hasLocalStorageSettings) {
+    if (sessionStore.user?.inputLang) {
+      inputLang.value = sessionStore.user.inputLang
+      userSettings.value.inputLang = sessionStore.user.inputLang
+      console.log(`📝 從 session 載入慣用語設定: ${inputLang.value}`)
+    }
+    if (sessionStore.user?.outputLang) {
+      outputLang.value = sessionStore.user.outputLang
+      userSettings.value.outputLang = sessionStore.user.outputLang
+      console.log(`📝 從 session 載入主板語言設定: ${outputLang.value}`)
+    }
   }
   if (sessionStore.user?.displayName) {
     userSettings.value.displayName = sessionStore.user.displayName
@@ -465,7 +469,10 @@ async function saveUserSettings(settings: AdvancedSettings) {
 // SmartVoiceRecorder 事件處理
 function handleTranscript(result: { text: string; confidence: number; lang: string }) {
   console.log('✅ 收到語音識別結果:', result)
-  
+
+  // 過濾空結果（已被後端 filter 的音檔）
+  if (!result.text || !result.text.trim()) return
+
   // 透過 WebSocket 發送翻譯請求
   if (ws.value && ws.value.readyState === WebSocket.OPEN && sessionStore.user) {
     const message = {
