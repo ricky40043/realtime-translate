@@ -80,36 +80,21 @@ class FreeTranslateService:
         if not lang_code:
             return "auto"
         
-        # 對應表
-        lang_mapping = {
-            "zh-TW": "zh-TW",  # google translator 支援繁體
-            "zh-CN": "zh-CN",
-            "zh": "zh-CN",
-            "Chinese": "zh-CN",
-            "english": "en",
-            "English": "en",
-            "en": "en",
-            "ja": "ja",
-            "japanese": "ja",
-            "Japanese": "ja",
-            "ko": "ko",
-            "korean": "ko",
-            "Korean": "ko",
-            "es": "es",
-            "spanish": "es",
-            "Spanish": "es",
-            "fr": "fr",
-            "french": "fr",
-            "French": "fr",
-            "de": "de",
-            "german": "de",
-            "German": "de",
-            "my": "my",        # 緬甸文
-            "burmese": "my",
-            "Burmese": "my"
-        }
+        lang_code = lang_code.replace('_', '-')
         
-        return lang_mapping.get(lang_code, lang_code)
+        # 繁體中文特例
+        if lang_code.lower() in ["zh-tw", "zh-hk", "chinese (traditional)", "zho-tw", "traditional chinese"]:
+            return "zh-TW"
+            
+        # 簡體中文特例
+        if lang_code.lower() in ["zh-cn", "zh", "zh-sg", "chinese", "chinese (simplified)", "zho", "cmn", "simplified chinese"]:
+            return "zh-CN"
+            
+        # 處理普通帶有國碼的情況，截斷保留主要語系 (例如 en-US -> en, ja-JP -> ja)
+        if '-' in lang_code:
+            return lang_code.split('-')[0].lower()
+            
+        return lang_code.lower()
     
     async def _mock_translate(self, text: str, target_lang: str, source_lang: Optional[str] = None) -> Dict:
         """模擬翻譯回退"""
