@@ -49,7 +49,6 @@
         <!-- 智能語音錄音器 -->
         <SmartVoiceRecorder
           :room-id="roomId"
-          :user-lang="inputLang"
           :settings="userSettings"
           :speaker-name="userSettings.displayName"
           :disabled="!sessionStore.isConnected"

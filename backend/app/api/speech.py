@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks
+from typing import Optional
 from pydantic import BaseModel
 import asyncpg
 import re
@@ -255,8 +256,8 @@ async def broadcast_speech_translations(
 async def upload_speech(
     background_tasks: BackgroundTasks,
     room_id: str = Form(...),
-    language_code: str = Form("zh-TW"),
-    speaker_name: str = Form(None),
+    language_code: Optional[str] = Form(None),
+    speaker_name: Optional[str] = Form(None),
     audio: UploadFile = File(...),
     current_user: str = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db)

@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks
+from typing import Optional
 from pydantic import BaseModel
 import asyncpg
 import re
@@ -137,7 +138,7 @@ transcript_cache = {}
 @router.post("/stt-only", response_model=STTResponse)
 async def speech_to_text_only(
     room_id: str = Form(...),
-    language_code: str = Form("zh-TW"),
+    language_code: Optional[str] = Form(None),
     audio: UploadFile = File(...),
     current_user: str = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db)

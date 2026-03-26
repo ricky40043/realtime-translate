@@ -77,14 +77,17 @@ class GroqSTTService:
         try:
             # 開啟音頻檔案
             with open(audio_file_path, "rb") as file:
-                # 使用 Groq 的 whisper 模型進行轉錄
-                transcription = self.client.audio.transcriptions.create(
-                    file=file,
-                    model="whisper-large-v3",  # Groq 支援的 Whisper 模型
-                    language=self._convert_lang_code(language_code),
-                    response_format="verbose_json",
-                    temperature=0.0
-                )
+                converted_lang = self._convert_lang_code(language_code)
+                kwargs = {
+                    "file": file,
+                    "model": "whisper-large-v3",
+                    "response_format": "verbose_json",
+                    "temperature": 0.0
+                }
+                if converted_lang:
+                    kwargs["language"] = converted_lang
+                # 不傳 language 時 Whisper 自動偵測
+                transcription = self.client.audio.transcriptions.create(**kwargs)
                 
                 # 解析回應
                 text = transcription.text
@@ -140,9 +143,9 @@ class GroqSTTService:
             }
     
     def _convert_lang_code(self, lang_code: str) -> str:
-        """轉換語言代碼格式以符合 Groq API"""
+        """轉換語言代碼格式以符合 Groq API，回傳 None 表示自動偵測"""
         if not lang_code:
-            return "zh"
+            return None  # None = 讓 Whisper 自動偵測語言
         
         # Groq/Whisper 語言代碼對映
         lang_mapping = {
