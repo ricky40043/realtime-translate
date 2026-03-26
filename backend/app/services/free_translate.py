@@ -21,14 +21,24 @@ class FreeTranslateService:
         try:
             # 轉換語言代碼
             target_code = self._convert_lang_code(target_lang)
-            source_code = 'auto'  # 強制使用 auto 讓 Google 自動檢測語言，避免 STT 誤判導致翻譯失敗
+            source_code = self._convert_lang_code(source_lang) if source_lang else 'auto'
             
-            # 使用 deep-translator 進行翻譯（它內部會處理分段和各種 URL 問題）
+            # 使用 deep-translator 進行翻譯
             loop = asyncio.get_event_loop()
             translated_text = await loop.run_in_executor(
                 None,
                 lambda: GoogleTranslator(source=source_code, target=target_code).translate(text)
             )
+            
+            # 容錯機制：如果 STT 判斷的來源語言出錯（例如 STT 硬說是中文，但你講了日文ありがとう），
+            # 導致 Google 翻譯無法把日文當成中文翻，原封不動退回給我們。
+            # 遇到這種翻譯前後完全一樣的情況，我們改用 Google 極強的 auto 自動檢測再試一次！
+            if translated_text == text and target_code != source_code and source_code != 'auto':
+                print(f"⚠️ {source_code}->{target_code} 翻譯無變化，改用 auto 重新檢測翻譯")
+                translated_text = await loop.run_in_executor(
+                    None,
+                    lambda: GoogleTranslator(source='auto', target=target_code).translate(text)
+                )
             
             latency_ms = int((time.time() - start_time) * 1000)
             
