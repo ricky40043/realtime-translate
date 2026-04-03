@@ -19,5 +19,5 @@ COPY . .
 # 暴露端口
 EXPOSE 8081
 
-# 啟動命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081"]
+# 啟動命令：先跑 migration，再啟動 server
+CMD ["bash", "start.sh"]

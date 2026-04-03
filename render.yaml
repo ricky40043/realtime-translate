@@ -1,0 +1,61 @@
+services:
+  # ── Backend (FastAPI) ──────────────────────────────────────────
+  - type: web
+    name: polyglot-chat-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: POSTGRES_URL
+        fromDatabase:
+          name: polyglot-chat-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: polyglot-chat-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TRANSLATE_PROVIDER
+        value: free
+      - key: STT_PROVIDER
+        value: groq
+      # 請在 Render Dashboard 手動設定：
+      - key: GROQ_API_KEY
+        sync: false
+
+  # ── Frontend (Vue / Vite → Static Site) ───────────────────────
+  - type: web
+    name: polyglot-chat-frontend
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    rootDir: frontend
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # 部署後請到 Render Dashboard 填入實際後端 URL，例如：
+      #   VITE_API_URL  = https://polyglot-chat-backend.onrender.com/api
+      #   VITE_WS_URL   = wss://polyglot-chat-backend.onrender.com/ws
+      - key: VITE_API_URL
+        sync: false
+      - key: VITE_WS_URL
+        sync: false
+
+  # ── Redis ──────────────────────────────────────────────────────
+  - type: redis
+    name: polyglot-chat-redis
+    plan: free
+    ipAllowList: []
+
+# ── PostgreSQL ────────────────────────────────────────────────────
+databases:
+  - name: polyglot-chat-db
+    plan: free
+    databaseName: rt
+    user: rt_user
