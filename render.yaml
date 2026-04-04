@@ -1,28 +1,19 @@
 services:
-  # ── 單一 Docker 服務（nginx + uvicorn 合一）──────────────────────
+  # ── 單一 Docker 服務（FastAPI serve 前後端）──────────────────────
   - type: web
     name: polyglot-chat
     runtime: docker
     plan: free
     healthCheckPath: /health
     envVars:
-      - key: POSTGRES_URL
-        fromDatabase:
-          name: polyglot-chat-db
-          property: connectionString
       - key: JWT_SECRET
         generateValue: true
       - key: TRANSLATE_PROVIDER
         value: free
       - key: STT_PROVIDER
         value: groq
-      # 請在 Render Dashboard 手動設定：
+      # 請在 Render Dashboard 手動設定以下兩個：
+      - key: POSTGRES_URL
+        sync: false   # 填入 Neon / Supabase 的連線字串
       - key: GROQ_API_KEY
         sync: false
-
-# ── PostgreSQL ────────────────────────────────────────────────────
-databases:
-  - name: polyglot-chat-db
-    plan: free
-    databaseName: rt
-    user: rt_user
