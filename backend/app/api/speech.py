@@ -122,6 +122,7 @@ async def process_speech_translation(
     speaker_name: str = None
 ):
     """背景處理語音轉文字的翻譯和廣播"""
+    t_bg_full_start = time.time()
     print(f"🔄 process_speech_translation 開始執行...")
     print(f"   message_id: {message_id}")
     print(f"   room_id: {room_id}")
@@ -131,7 +132,9 @@ async def process_speech_translation(
     
     # ✅ 重要：從連接池獲取新的資料庫連接
     from ..db.pool import get_db_pool
+    t_pool_start = time.time()
     pool = await get_db_pool()
+    print(f"⏱️ [PERF][BG] 獲取 DB Pool 耗時: {time.time() - t_pool_start:.3f} 秒")
     
     async with pool.acquire() as db:
         try:
@@ -140,9 +143,11 @@ async def process_speech_translation(
             print(f"   在線用戶數: {len(online_users)}")
             
             # 計算目標語言
+            t_router_start = time.time()
             lang_router = LanguageRouter(db)
             target_langs = await lang_router.get_all_target_languages(room_id, speaker_id, online_users)
-            print(f"   目標語言: {target_langs}")
+            print(f"⏱️ [PERF][BG] 語言路由計算耗時: {time.time() - t_router_start:.3f} 秒")
+            print(f"   目標語言列表: {target_langs}")
             
             # 批次翻譯
             t_trans_start = time.time()
@@ -168,12 +173,14 @@ async def process_speech_translation(
                 )
             
             # 廣播給個人視圖和主板視圖
+            t_broadcast_start = time.time()
             await broadcast_speech_translations(
                 room_id, speaker_id, message_id, text, source_lang, 
                 translations, online_users, db, speaker_name
             )
+            print(f"⏱️ [PERF][BG] 廣播翻譯結果耗時: {time.time() - t_broadcast_start:.3f} 秒")
             
-            print(f"✅ process_speech_translation 完成執行")
+            print(f"✅ process_speech_translation 完成執行 (總流程耗時: {time.time() - t_bg_full_start:.3f} 秒)")
             
         except Exception as e:
             print(f"❌ Error processing speech translation: {e}")
