@@ -3,8 +3,7 @@ services:
   - type: web
     name: polyglot-chat-backend
     runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    rootDir: backend
     plan: free
     healthCheckPath: /health
     envVars:
