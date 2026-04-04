@@ -1,6 +1,8 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -24,15 +26,12 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,      # 不可用 "*"
-    allow_credentials=True,     # 若用 Cookie 或需要帶授權
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 使用全域連線管理器
-
-# 註冊路由
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
@@ -45,12 +44,10 @@ async def startup_event():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, roomId: str, userId: str, token: str):
-    """WebSocket 連線端點"""
     await manager.connect(websocket, roomId, userId, token)
     try:
         while True:
             data = await websocket.receive_text()
-            # 處理客戶端訊息（如果需要）
             await manager.handle_client_message(websocket, data)
     except WebSocketDisconnect:
         await manager.disconnect(websocket, roomId, userId)
@@ -59,16 +56,20 @@ async def websocket_endpoint(websocket: WebSocket, roomId: str, userId: str, tok
 async def health_check():
     return {"status": "healthy"}
 
-# ── SPA fallback（必須放在所有 API 路由之後）────────────────────
+# ── SPA Frontend ──────────────────────────────────────────────────
 STATIC_DIR = Path("/app/static")
 
-@app.get("/{full_path:path}")
-async def serve_frontend(full_path: str):
-    """静態檔案直接回傳，其他路由 fallback 到 index.html（SPA）"""
-    if STATIC_DIR.exists():
-        target = STATIC_DIR / full_path
-        if target.is_file():
-            return FileResponse(str(target))
-        # SPA fallback
-        return FileResponse(str(STATIC_DIR / "index.html"))
-    return {"message": "Realtime Translation API is running"}
+if STATIC_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="frontend")
+
+# 全域 404 處置器：如果找不到路由（例如 /user），而且不是 API 請求，就回傳 index.html 讓 Vue 處理
+@app.exception_handler(StarletteHTTPException)
+async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        if STATIC_DIR.exists():
+            index_file = STATIC_DIR / "index.html"
+            if index_file.exists():
+                return FileResponse(str(index_file))
+    return JSONResponse({"detail": str(exc.detail)}, status_code=exc.status_code)
