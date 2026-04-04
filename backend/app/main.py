@@ -1,7 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -60,8 +59,16 @@ async def websocket_endpoint(websocket: WebSocket, roomId: str, userId: str, tok
 async def health_check():
     return {"status": "healthy"}
 
-# ── 靜態前端（必須放在所有 API 路由之後）──────────────────────────
-# 容器內前端 build 產物放在 /app/static
-static_dir = Path("/app/static")
-if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="frontend")
+# ── SPA fallback（必須放在所有 API 路由之後）────────────────────
+STATIC_DIR = Path("/app/static")
+
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    """静態檔案直接回傳，其他路由 fallback 到 index.html（SPA）"""
+    if STATIC_DIR.exists():
+        target = STATIC_DIR / full_path
+        if target.is_file():
+            return FileResponse(str(target))
+        # SPA fallback
+        return FileResponse(str(STATIC_DIR / "index.html"))
+    return {"message": "Realtime Translation API is running"}
