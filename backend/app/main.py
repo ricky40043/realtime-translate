@@ -1,7 +1,9 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 from .api import auth, rooms, ingest, speech, speech_staged
@@ -54,10 +56,12 @@ async def websocket_endpoint(websocket: WebSocket, roomId: str, userId: str, tok
     except WebSocketDisconnect:
         await manager.disconnect(websocket, roomId, userId)
 
-@app.get("/")
-async def root():
-    return {"message": "Realtime Translation API is running"}
-
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+# ── 靜態前端（必須放在所有 API 路由之後）──────────────────────────
+# 容器內前端 build 產物放在 /app/static
+static_dir = Path("/app/static")
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="frontend")
