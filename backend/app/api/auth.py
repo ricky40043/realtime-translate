@@ -50,6 +50,7 @@ async def guest_login(request: GuestLoginRequest, db: asyncpg.Connection = Depen
             output_lang=request.output_lang
         )
     except Exception as e:
+        print(f"[AUTH] guest_login error: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create guest user: {str(e)}")
 
 class UpdateLanguageRequest(BaseModel):

@@ -12,19 +12,22 @@ async def init_db() -> None:
     """初始化資料庫連線池"""
     global _pool
     if _pool is None:
-        database_url = os.getenv("POSTGRES_URL", "postgres://user:pass@localhost:5432/rt")
-        logger.info(f"Connecting to DB: {database_url[:40]}...")
+        database_url = os.getenv("POSTGRES_URL", "")
+        print(f"[DB] POSTGRES_URL starts with: {database_url[:50]}")
+        if not database_url:
+            print("[DB] ERROR: POSTGRES_URL is not set!")
+            raise RuntimeError("POSTGRES_URL environment variable is not set")
         try:
             _pool = await asyncpg.create_pool(
                 database_url,
-                ssl='require',       # Neon 需要 SSL
+                ssl='require',
                 min_size=1,
                 max_size=5,
                 command_timeout=60
             )
-            logger.info("DB pool created successfully.")
+            print("[DB] Pool created successfully!")
         except Exception as e:
-            logger.error(f"Failed to create DB pool: {e}")
+            print(f"[DB] FAILED to create pool: {type(e).__name__}: {e}")
             raise
 
 async def get_db_pool() -> asyncpg.Pool:
