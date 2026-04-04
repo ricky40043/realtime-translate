@@ -3,6 +3,7 @@ from typing import Optional
 from pydantic import BaseModel
 import asyncpg
 import re
+import time
 from ..deps import get_db, get_current_user
 from ..db.repo import MessageRepo, RoomRepo
 from ..services.stt import stt_service
@@ -144,9 +145,12 @@ async def process_speech_translation(
             print(f"   目標語言: {target_langs}")
             
             # 批次翻譯
+            t_trans_start = time.time()
             translations = await translation_service.batch_translate(
                 text, list(target_langs), source_lang
             )
+            t_trans_end = time.time()
+            print(f"⏱️ [PERF][Translate] 批次翻譯 {len(target_langs)} 種語言耗時: {t_trans_end - t_trans_start:.3f} 秒")
             
             print(f"🔄 翻譯結果:")
             for lang, result in translations.items():
@@ -282,11 +286,14 @@ async def upload_speech(
             raise HTTPException(status_code=400, detail="Audio file too large (max 10MB)")
         
         # 語音轉文字
+        t_stt_start = time.time()
         stt_result = await stt_service.transcribe_audio(
             audio_data, 
             audio.content_type, 
             language_code
         )
+        t_stt_end = time.time()
+        print(f"⏱️ [PERF][STT] Groq 語音辨識耗時: {t_stt_end - t_stt_start:.3f} 秒")
         
         transcript = stt_result["text"]
         confidence = stt_result["confidence"]
