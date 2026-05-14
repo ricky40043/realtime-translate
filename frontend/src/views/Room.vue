@@ -31,6 +31,13 @@
             <option value="es">Español</option>
             <option value="fr">Français</option>
             <option value="de">Deutsch</option>
+            <option value="it">Italiano</option>
+            <option value="pt">Português</option>
+            <option value="ru">Русский</option>
+            <option value="ar">العربية</option>
+            <option value="hi">हिन्दी</option>
+            <option value="th">ไทย</option>
+            <option value="vi">Tiếng Việt</option>
             <option value="my">မြန်မာ</option>
             <option value="id">Bahasa Indonesia</option>
             <option value="ms">Bahasa Melayu</option>
