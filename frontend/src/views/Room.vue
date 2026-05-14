@@ -87,9 +87,8 @@ const isLoading = ref(false)
 onMounted(async () => {
   sessionStore.loadAuth()
   loadProfile()
-  if (!sessionStore.isAuthenticated) {
-    await performGuestLogin()
-  }
+  // 首頁每次都重新登入，避免 localStorage 殘留的過期 token 導致 401
+  await performGuestLogin()
 })
 
 function loadProfile() {
@@ -135,9 +134,6 @@ async function createRoom() {
   }
 
   try {
-    if (!sessionStore.isAuthenticated) {
-      await performGuestLogin()
-    }
     saveProfile()
 
     const savedAdvanced = localStorage.getItem('userAdvancedSettings')
