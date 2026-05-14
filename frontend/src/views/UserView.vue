@@ -14,6 +14,9 @@
           <span class="user-name">{{ userSettings.displayName || '未設定' }}</span>
           <span class="lang-info">{{ getLanguageName(inputLang) }} → {{ getLanguageName(outputLang) }}</span>
         </div>
+        <button @click="showShareModal = true" class="share-btn" title="分享房間">
+          📤
+        </button>
         <button @click="openSettings" class="settings-btn" title="個人設定">
           ⚙️
         </button>
@@ -60,6 +63,26 @@
       </div>
     </footer>
 
+    <!-- 分享房間 Modal -->
+    <div v-if="showShareModal" class="modal-overlay" @click="showShareModal = false">
+      <div class="share-modal" @click.stop>
+        <div class="share-header">
+          <h3>📤 分享房間</h3>
+          <button @click="showShareModal = false" class="close-btn">✕</button>
+        </div>
+        <div class="qr-wrapper">
+          <canvas ref="qrCanvas" class="qr-code"></canvas>
+        </div>
+        <p class="share-hint">掃描 QR Code 或複製連結加入</p>
+        <div class="link-row">
+          <input :value="roomShareUrl" readonly class="link-input" />
+          <button @click="copyLink" class="copy-btn">
+            {{ linkCopied ? '✅' : '複製' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 設定Modal -->
     <SettingsModal
       :show="showSettingsModal"
@@ -72,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSessionStore } from '../stores/session'
 import { authApi, roomApi, ingestApi } from '../api/http'
@@ -80,6 +103,7 @@ import { speechApi } from '../api/speech'
 import type { Message } from '../stores/session'
 import SettingsModal from '../components/SettingsModal.vue'
 import SmartVoiceRecorder from '../components/SmartVoiceRecorder.vue'
+import QRCode from 'qrcode'
 
 interface AdvancedSettings {
   displayName: string
@@ -104,6 +128,11 @@ const isProcessing = ref(false)
 const ws = ref<WebSocket | null>(null)
 const connectedUsers = ref(0)
 
+// 分享面板相關
+const showShareModal = ref(false)
+const qrCanvas = ref<HTMLCanvasElement | null>(null)
+const linkCopied = ref(false)
+
 // 設定Modal相關
 const showSettingsModal = ref(false)
 const isFirstTime = ref(false)
@@ -123,6 +152,11 @@ const userSettings = ref<AdvancedSettings>({
 
 // 房間 ID
 const roomId = ref<string>('')
+
+// 分享連結
+const roomShareUrl = computed(() =>
+  roomId.value ? `${window.location.origin}/user?roomId=${roomId.value}` : ''
+)
 
 // 計算屬性：獲取最新的個人字幕訊息
 const latestMessage = computed(() => {
@@ -147,24 +181,31 @@ onMounted(async () => {
   }
   
   roomId.value = routeRoomId
-  
+
+  // 先載入本地設定（讓 performGuestLogin 能使用已儲存的名稱）
+  loadUserSettings()
+
   // 檢查是否首次進入
   checkFirstTimeUser()
-  
-  // 每次都進行新的匿名登入，確保每個分頁有不同的用戶ID
+
+  // 匿名登入（使用已儲存的名稱）
   await performGuestLogin()
-  
-  // 載入用戶語言設定，並將偏好語言同步回後端（新用戶每次建立時需要）
-  loadUserSettings()
+
+  // 將語言設定同步到後端
   await updateSettings()
 
   // 載入房間資料並連線
   await loadRoom()
   await connectWebSocket()
-  
+
   // 如果是首次進入，自動顯示設定modal
   if (isFirstTime.value) {
     showSettingsModal.value = true
+  }
+
+  // 從首頁建立房間跳轉過來時，自動展開分享面板
+  if (route.query.share === 'true') {
+    showShareModal.value = true
   }
 })
 
@@ -184,12 +225,10 @@ watch(() => route.params.roomId, async (newRoomId) => {
 // 匿名登入
 async function performGuestLogin() {
   try {
-    // 為了測試多用戶場景，每個頁面都創建新的用戶
-    // 在生產環境中可能需要不同的邏輯
-    console.log('🆕 為每個頁面創建新用戶（測試模式）')
-    
-    const userName = `用戶_${Math.random().toString(36).substr(2, 6)}`
-    console.log(`👤 創建新用戶: ${userName}, 慣用語: ${inputLang.value}, 主板語言: ${outputLang.value}`)
+    // 優先使用已儲存的名稱，否則才隨機產生
+    const savedName = userSettings.value.displayName?.trim()
+    const userName = savedName || `用戶_${Math.random().toString(36).substr(2, 6)}`
+    console.log(`👤 登入用戶: ${userName}, 慣用語: ${inputLang.value}, 主板語言: ${outputLang.value}`)
     const response = await authApi.guestLogin(userName, inputLang.value, inputLang.value, outputLang.value)
     
     const userInfo = {
@@ -363,7 +402,22 @@ function loadUserSettings() {
   if (sessionStore.user?.displayName) {
     userSettings.value.displayName = sessionStore.user.displayName
   }
-  
+
+  // 如果沒有進階設定，從 userProfile 讀取基本名稱和語言
+  if (!savedAdvancedSettings) {
+    const savedProfile = localStorage.getItem('userProfile')
+    if (savedProfile) {
+      const profile = JSON.parse(savedProfile)
+      if (profile.displayName && !userSettings.value.displayName) {
+        userSettings.value.displayName = profile.displayName
+      }
+      if (profile.inputLang) {
+        inputLang.value = profile.inputLang
+        userSettings.value.inputLang = profile.inputLang
+      }
+    }
+  }
+
   // 如果 session 中沒有設定，才使用 localStorage 作為後備
   if (!sessionStore.user?.inputLang || !sessionStore.user?.outputLang) {
     const savedSettings = localStorage.getItem('userLanguageSettings')
@@ -440,6 +494,12 @@ async function saveUserSettings(settings: AdvancedSettings) {
     
     // 保存到localStorage
     localStorage.setItem('userAdvancedSettings', JSON.stringify(settings))
+
+    // 同步基本資訊給首頁使用
+    localStorage.setItem('userProfile', JSON.stringify({
+      displayName: settings.displayName,
+      inputLang: settings.inputLang
+    }))
     
     // 更新session store中的用戶資料
     if (sessionStore.user) {
@@ -503,6 +563,23 @@ function handleRecordingStart() {
 function handleRecordingEnd() {
   console.log('⏹️ 結束智能錄音')
   isRecording.value = false
+}
+
+// 分享面板
+watch(showShareModal, async (visible) => {
+  if (visible) {
+    await nextTick()
+    if (qrCanvas.value && roomShareUrl.value) {
+      await QRCode.toCanvas(qrCanvas.value, roomShareUrl.value, { width: 200, margin: 1 })
+    }
+  }
+})
+
+async function copyLink() {
+  if (!roomShareUrl.value) return
+  await navigator.clipboard.writeText(roomShareUrl.value)
+  linkCopied.value = true
+  setTimeout(() => { linkCopied.value = false }, 2000)
 }
 
 // 語言代碼轉換為顯示名稱
@@ -627,6 +704,25 @@ function getLanguageName(langCode: string): string {
   border: 1px solid #e9ecef;
 }
 
+.share-btn {
+  background: rgba(102, 126, 234, 0.15);
+  color: white;
+  border: 1px solid rgba(102, 126, 234, 0.4);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.share-btn:hover {
+  background: rgba(102, 126, 234, 0.3);
+}
+
 .settings-btn {
   background: #667eea;
   color: white;
@@ -647,6 +743,118 @@ function getLanguageName(langCode: string): string {
   background: #5a6fd8;
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+/* 分享 Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+  backdrop-filter: blur(4px);
+}
+
+.share-modal {
+  background: #1e1b4b;
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  border-radius: 20px;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.share-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.share-header h3 {
+  margin: 0;
+  color: white;
+  font-size: 1.1rem;
+}
+
+.close-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.qr-wrapper {
+  background: white;
+  border-radius: 12px;
+  padding: 12px;
+  display: inline-flex;
+}
+
+.qr-code {
+  display: block;
+  border-radius: 4px;
+}
+
+.share-hint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.link-row {
+  width: 100%;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.link-input {
+  flex: 1;
+  padding: 0.65rem 0.75rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.82rem;
+  outline: none;
+  min-width: 0;
+}
+
+.copy-btn {
+  padding: 0.65rem 1rem;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+}
+
+.copy-btn:hover {
+  opacity: 0.9;
 }
 
 .subtitle-main {

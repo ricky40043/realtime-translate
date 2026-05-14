@@ -1,3 +1,6 @@
 version: '3.9'
-# 此檔案保留供本機開發需要時手動加 port，目前不啟用任何覆蓋
-services: {}
+# 本機開發用：將後端 8081 port 對映到 host，讓本地前端可連接
+services:
+  backend:
+    ports:
+      - "8081:8081"

@@ -50,7 +50,8 @@
               <p class="form-help">別人說話時，您看到的翻譯語言</p>
             </div>
 
-            <div class="form-group">
+            <!-- 手機版不需要白板語言設定 -->
+            <div v-if="!isMobile" class="form-group">
               <label class="form-label">大白板語言（我說話時）</label>
               <select v-model="localSettings.outputLang" class="form-select" required>
                 <option value="zh-TW">繁體中文</option>
@@ -77,85 +78,55 @@
             </div>
           </section>
 
-          <!-- 進階語音設定 -->
+          <!-- 進階語音設定（可折疊） -->
           <section class="settings-section">
-            <h3>🎤 進階語音設定</h3>
-            
-            <div class="form-group">
-              <label class="form-label">
-                語音檢測閾值 
-                <span class="threshold-value">{{ localSettings.segmentThreshold }}%</span>
-              </label>
-              <input
-                v-model.number="localSettings.segmentThreshold"
-                type="range"
-                min="1"
-                max="30"
-                class="form-range"
-              />
-              <p class="form-help">低於此音量視為靜音，用於自動分段和語音檢測</p>
-            </div>
-            
-            <div class="form-group">
-              <label class="form-label">
-                靜音結束時間 
-                <span class="threshold-value">{{ localSettings.silenceTimeout }}秒</span>
-              </label>
-              <input
-                v-model.number="localSettings.silenceTimeout"
-                type="range"
-                min="1"
-                max="10"
-                class="form-range"
-              />
-              <p class="form-help">靜音超過此時間自動結束錄音</p>
-            </div>
-            
-            <div class="form-group">
-              <label class="form-label">
-                最短分段時間 
-                <span class="threshold-value">{{ localSettings.minSegmentTime }}秒</span>
-              </label>
-              <input
-                v-model.number="localSettings.minSegmentTime"
-                type="range"
-                min="0.5"
-                max="3"
-                step="0.5"
-                class="form-range"
-              />
-              <p class="form-help">錄音至少需要此時間才能進行自動分段</p>
-            </div>
-            
-            <div class="form-group">
-              <label class="form-label">
-                分段延遲時間 
-                <span class="threshold-value">{{ localSettings.segmentDelay }}秒</span>
-              </label>
-              <input
-                v-model.number="localSettings.segmentDelay"
-                type="range"
-                min="0.5"
-                max="3"
-                step="0.5"
-                class="form-range"
-              />
-              <p class="form-help">音量低於閾值後持續此時間才會送出音檔</p>
-            </div>
-            
-            <div class="form-group">
-              <label class="form-label">
-                最長連續錄音時間 
-                <span class="threshold-value">{{ localSettings.maxRecordingTime }}秒</span>
-              </label>
-              <input
-                v-model.number="localSettings.maxRecordingTime"
-                type="range"
-                min="5"
-                max="60"
-                class="form-range"
-              />
-              <p class="form-help">連續錄音超過此時間自動強制分段</p>
+            <button type="button" class="advanced-toggle" @click="showAdvanced = !showAdvanced">
+              <span>🎤 進階語音設定</span>
+              <span class="toggle-arrow" :class="{ open: showAdvanced }">›</span>
+            </button>
+
+            <div v-if="showAdvanced" class="advanced-body">
+              <div class="form-group">
+                <label class="form-label">
+                  語音檢測閾值
+                  <span class="threshold-value">{{ localSettings.segmentThreshold }}%</span>
+                </label>
+                <input v-model.number="localSettings.segmentThreshold" type="range" min="1" max="30" class="form-range" />
+                <p class="form-help">低於此音量視為靜音</p>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">
+                  靜音結束時間
+                  <span class="threshold-value">{{ localSettings.silenceTimeout }}秒</span>
+                </label>
+                <input v-model.number="localSettings.silenceTimeout" type="range" min="1" max="10" class="form-range" />
+                <p class="form-help">靜音超過此時間自動結束錄音</p>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">
+                  最短分段時間
+                  <span class="threshold-value">{{ localSettings.minSegmentTime }}秒</span>
+                </label>
+                <input v-model.number="localSettings.minSegmentTime" type="range" min="0.5" max="3" step="0.5" class="form-range" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">
+                  分段延遲時間
+                  <span class="threshold-value">{{ localSettings.segmentDelay }}秒</span>
+                </label>
+                <input v-model.number="localSettings.segmentDelay" type="range" min="0.5" max="3" step="0.5" class="form-range" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">
+                  最長連續錄音
+                  <span class="threshold-value">{{ localSettings.maxRecordingTime }}秒</span>
+                </label>
+                <input v-model.number="localSettings.maxRecordingTime" type="range" min="5" max="60" class="form-range" />
+              </div>
             </div>
           </section>
           
@@ -204,6 +175,9 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
+
+const isMobile = window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+const showAdvanced = ref(false)
 
 interface AdvancedSettings {
   displayName: string
@@ -717,23 +691,100 @@ function stopVoiceTest() {
   cursor: not-allowed;
 }
 
+.advanced-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 0;
+}
+
+.toggle-arrow {
+  font-size: 1.4rem;
+  color: #667eea;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+
+.toggle-arrow.open {
+  transform: rotate(90deg);
+}
+
+.advanced-body {
+  margin-top: 1rem;
+}
+
 /* 響應式設計 */
 @media (max-width: 768px) {
   .modal-container {
-    width: 95vw;
-    max-height: 95vh;
+    width: 96vw;
+    max-height: 92vh;
+    border-radius: 12px;
   }
-  
-  .modal-header, .modal-body, .modal-footer {
+
+  .modal-header {
+    padding: 0.9rem 1rem;
+  }
+
+  .modal-header h2 {
+    font-size: 1.1rem;
+  }
+
+  .modal-body {
     padding: 1rem;
   }
-  
-  .modal-footer {
-    flex-direction: column;
+
+  .settings-section {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
   }
-  
-  .btn-secondary, .btn-primary {
-    width: 100%;
+
+  .settings-section h3 {
+    margin-bottom: 0.75rem;
+    font-size: 0.95rem;
+  }
+
+  .form-group {
+    margin-bottom: 0.9rem;
+  }
+
+  .form-label {
+    font-size: 0.88rem;
+  }
+
+  .form-help {
+    font-size: 0.78rem;
+  }
+
+  .modal-footer {
+    padding: 0.75rem 1rem;
+    gap: 0.5rem;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .modal-footer .btn-secondary:first-child {
+    flex: 0 0 auto;
+    font-size: 0.82rem;
+    padding: 0.6rem 0.8rem;
+  }
+
+  .modal-footer .btn-secondary:nth-child(2) {
+    margin-left: auto;
+    font-size: 0.88rem;
+    padding: 0.6rem 1rem;
+  }
+
+  .btn-primary {
+    font-size: 0.88rem;
+    padding: 0.6rem 1rem;
   }
 }
 </style>
