@@ -167,7 +167,11 @@ class GroqSTTService:
             "ar": "ar",
             "hi": "hi",
             "th": "th",
-            "vi": "vi"
+            "vi": "vi",
+            "id": "id",
+            "ms": "ms",
+            "my": "my",
+            "yue": "yue"
         }
         
         return lang_mapping.get(lang_code, "en")
