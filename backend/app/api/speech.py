@@ -5,7 +5,7 @@ import asyncpg
 import re
 import time
 from ..deps import get_db, get_current_user
-from ..db.repo import MessageRepo, RoomRepo
+from ..db.repo import MessageRepo, RoomRepo, UserRepo
 from ..services.stt import stt_service
 from ..services.translate import translation_service, detect_language
 from ..services.router import LanguageRouter
@@ -94,7 +94,7 @@ async def process_speech_translation(
                 text, list(target_langs), source_lang
             )
             print(f"⏱️ [PERF][Translate] 批次翻譯 {len(target_langs)} 種語言耗時: {time.time() - t_trans_start:.3f} 秒")
-            
+
             # 4. 儲存結果
             message_repo = MessageRepo(db)
             for target_lang, translation in translations.items():
@@ -105,12 +105,14 @@ async def process_speech_translation(
                     latency_ms=translation.get("latency_ms"),
                     quality=translation.get("quality")
                 )
-            
-            # 5. 廣播
+
+            # 5. 廣播 — 一次批次查詢取代廣播迴圈中的 N 次個別查詢
             t_broadcast_start = time.time()
+            all_ids = list(set(online_users) | {speaker_id})
+            users_map = await UserRepo(db).get_users_batch(all_ids)
             await broadcast_speech_translations(
-                room_id, speaker_id, message_id, text, source_lang, 
-                translations, online_users, db, speaker_name
+                room_id, speaker_id, message_id, text, source_lang,
+                translations, online_users, users_map, speaker_name
             )
             print(f"⏱️ [PERF][BG] 廣播翻譯結果耗時: {time.time() - t_broadcast_start:.3f} 秒")
             print(f"✅ process_speech_translation 完成執行 (總流程耗時: {time.time() - t_bg_full_start:.3f} 秒)")
@@ -121,24 +123,21 @@ async def process_speech_translation(
         traceback.print_exc()
 
 async def broadcast_speech_translations(
-    room_id: str, speaker_id: str, message_id: str, original_text: str, 
-    source_lang: str, translations: dict, online_users: list, db: asyncpg.Connection,
+    room_id: str, speaker_id: str, message_id: str, original_text: str,
+    source_lang: str, translations: dict, online_users: list, users_map: dict,
     speaker_name: str = None
 ):
-    """廣播語音轉文字的翻譯結果"""
+    """廣播語音轉文字的翻譯結果（使用預先批次查詢的使用者資料，零額外 DB 查詢）"""
     try:
-        from ..db.repo import UserRepo
-        user_repo = UserRepo(db)
+        speaker = users_map.get(speaker_id)
         if not speaker_name:
-            speaker = await user_repo.get_user(speaker_id)
             speaker_name = speaker["display_name"] if speaker else "Unknown"
-        
+
         for user_id in online_users:
-            user = await user_repo.get_user(user_id)
+            user = users_map.get(user_id)
             if user:
-                user_input_lang = user["input_lang"] if user.get("input_lang") else user["preferred_lang"]
+                user_input_lang = user.get("input_lang") or user.get("preferred_lang", "zh-TW")
                 translated_text = translations.get(user_input_lang, {}).get("text", original_text)
-                
                 personal_message = {
                     "type": "personal.subtitle",
                     "messageId": message_id, "targetLang": user_input_lang,
@@ -146,11 +145,10 @@ async def broadcast_speech_translations(
                     "sourceLang": source_lang, "source": "speech", "timestamp": None
                 }
                 await manager.send_to_user(room_id, user_id, personal_message)
-        
+
         # 廣播主板
-        speaker = await user_repo.get_user(speaker_id)
         if speaker:
-            speaker_output_lang = speaker["output_lang"] if speaker.get("output_lang") else speaker["preferred_lang"]
+            speaker_output_lang = speaker.get("output_lang") or speaker.get("preferred_lang", "en")
             speaker_board_text = translations.get(speaker_output_lang, {}).get("text", original_text)
             board_message = {
                 "type": "board.post",

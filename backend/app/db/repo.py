@@ -39,6 +39,16 @@ class UserRepo:
             )
         return dict(row) if row else None
     
+    async def get_users_batch(self, user_ids: List[str]) -> Dict[str, Any]:
+        """批次取得多位使用者資料，一次 SQL 查詢取代 N 次"""
+        if not user_ids:
+            return {}
+        rows = await self.conn.fetch(
+            "SELECT id, display_name, preferred_lang, input_lang, output_lang FROM app_user WHERE id = ANY($1)",
+            user_ids
+        )
+        return {str(r['id']): dict(r) for r in rows}
+
     async def update_preferred_lang(self, user_id: str, preferred_lang: str):
         """更新使用者偏好語言"""
         await self.conn.execute(
