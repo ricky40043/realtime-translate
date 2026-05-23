@@ -2,6 +2,7 @@ import asyncpg
 import os
 import logging
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +18,13 @@ async def init_db() -> None:
         if not database_url:
             print("[DB] ERROR: POSTGRES_URL is not set!")
             raise RuntimeError("POSTGRES_URL environment variable is not set")
+        query = parse_qs(urlparse(database_url).query)
+        ssl_mode = query.get("sslmode", ["disable"])[0]
+        ssl_option = "require" if ssl_mode == "require" else False
         try:
             _pool = await asyncpg.create_pool(
                 database_url,
-                ssl='require',
+                ssl=ssl_option,
                 min_size=1,
                 max_size=5,
                 command_timeout=60

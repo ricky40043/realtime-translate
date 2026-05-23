@@ -104,7 +104,7 @@ async def broadcast_translations(
         for user_id in online_users:
             user = await user_repo.get_user(user_id)
             if user:
-                user_lang = user["preferred_lang"]
+                user_lang = user.get("input_lang") or user.get("preferred_lang", "zh-TW")
                 translated_text = translations.get(user_lang, {}).get("text", original_text)
                 
                 personal_message = {

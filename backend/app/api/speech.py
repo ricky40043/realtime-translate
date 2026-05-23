@@ -112,7 +112,7 @@ async def process_speech_translation(
             users_map = await UserRepo(db).get_users_batch(all_ids)
             await broadcast_speech_translations(
                 room_id, speaker_id, message_id, text, source_lang,
-                translations, online_users, users_map, speaker_name
+                translations, online_users, users_map, db, speaker_name
             )
             print(f"⏱️ [PERF][BG] 廣播翻譯結果耗時: {time.time() - t_broadcast_start:.3f} 秒")
             print(f"✅ process_speech_translation 完成執行 (總流程耗時: {time.time() - t_bg_full_start:.3f} 秒)")
@@ -125,7 +125,7 @@ async def process_speech_translation(
 async def broadcast_speech_translations(
     room_id: str, speaker_id: str, message_id: str, original_text: str,
     source_lang: str, translations: dict, online_users: list, users_map: dict,
-    speaker_name: str = None
+    db: asyncpg.Connection, speaker_name: str = None
 ):
     """廣播語音轉文字的翻譯結果（使用預先批次查詢的使用者資料，零額外 DB 查詢）"""
     try:
@@ -148,12 +148,13 @@ async def broadcast_speech_translations(
 
         # 廣播主板
         if speaker:
-            speaker_output_lang = speaker.get("output_lang") or speaker.get("preferred_lang", "en")
-            speaker_board_text = translations.get(speaker_output_lang, {}).get("text", original_text)
+            room = await RoomRepo(db).get_room(room_id)
+            board_lang = room.get("default_board_lang", "zh-TW") if room else "zh-TW"
+            speaker_board_text = translations.get(board_lang, {}).get("text", original_text)
             board_message = {
                 "type": "board.post",
                 "messageId": message_id, "speakerId": speaker_id,
-                "speakerName": speaker_name, "targetLang": speaker_output_lang,
+                "speakerName": speaker_name, "targetLang": board_lang,
                 "text": speaker_board_text, "sourceLang": source_lang,
                 "source": "speech", "timestamp": None
             }

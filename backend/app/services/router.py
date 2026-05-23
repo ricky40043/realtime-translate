@@ -40,12 +40,9 @@ class LanguageRouter:
                 user_input_lang = user.get("input_lang") or user.get("preferred_lang", "zh-TW")
                 personal_langs.add(user_input_lang)
 
-        # 主板視圖：使用講者的輸出語言
-        speaker = users_map.get(speaker_id)
-        if speaker:
-            board_lang = speaker.get("output_lang") or speaker.get("preferred_lang", "en")
-        else:
-            board_lang = override_map.get(speaker_id, room["default_board_lang"])
+        # 主板視圖：使用房間的主板語言設定。
+        # 講者自己的 output_lang 是個人設定，不應決定全場白板語言。
+        board_lang = override_map.get(speaker_id, room["default_board_lang"] or "zh-TW")
         
         board_langs = {board_lang}
         

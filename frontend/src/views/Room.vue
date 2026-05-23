@@ -90,20 +90,36 @@ const displayName = ref('')
 const inputLang = ref('zh-TW')
 const joinCode = ref('')
 const isLoading = ref(false)
+const authReady = ref(false)
 
 onMounted(async () => {
   sessionStore.loadAuth()
   loadProfile()
   // 首頁每次都重新登入，避免 localStorage 殘留的過期 token 導致 401
-  await performGuestLogin()
+  try {
+    await performGuestLogin()
+    authReady.value = true
+  } catch (error) {
+    console.error('初始化登入失敗:', error)
+    authReady.value = false
+  }
 })
 
 function loadProfile() {
   const saved = localStorage.getItem('userProfile')
   if (!saved) return
-  const p = JSON.parse(saved)
+  const p = safeParseJson<{ displayName?: string; inputLang?: string }>(saved, {})
   displayName.value = p.displayName || ''
   inputLang.value = p.inputLang || 'zh-TW'
+}
+
+function safeParseJson<T>(value: string | null, fallback: T): T {
+  if (!value) return fallback
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
 }
 
 function saveProfile() {
@@ -129,6 +145,10 @@ function isMobileDevice(): boolean {
   return window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 }
 
+function isEmbeddedBrowser(): boolean {
+  return /Line|FBAN|FBAV|Instagram|MicroMessenger/i.test(navigator.userAgent)
+}
+
 async function createRoom() {
   if (isLoading.value) return
   isLoading.value = true
@@ -136,15 +156,21 @@ async function createRoom() {
   // iOS Safari：window.open 必須在任何 await 之前同步執行，否則會被攔截
   // 手機版：新分頁開說話視窗，當前頁留在白板
   let speakerTab: Window | null = null
-  if (isMobileDevice()) {
+  if (isMobileDevice() && !isEmbeddedBrowser()) {
     speakerTab = window.open('', '_blank')
   }
 
   try {
     saveProfile()
 
+    if (!sessionStore.isAuthenticated || !authReady.value) {
+      await performGuestLogin()
+      authReady.value = true
+    }
+
     const savedAdvanced = localStorage.getItem('userAdvancedSettings')
-    const boardLang = savedAdvanced ? (JSON.parse(savedAdvanced).outputLang || 'zh-TW') : 'zh-TW'
+    const advancedSettings = safeParseJson<{ outputLang?: string }>(savedAdvanced, {})
+    const boardLang = advancedSettings.outputLang || 'zh-TW'
 
     const now = new Date()
     const roomName = `房間_${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}_${now.getHours().toString().padStart(2,'0')}${now.getMinutes().toString().padStart(2,'0')}`
@@ -159,7 +185,7 @@ async function createRoom() {
       }
       // 自動複製加入連結到剪貼簿，方便分享給別人
       try {
-        await navigator.clipboard.writeText(userLink)
+        navigator.clipboard?.writeText(userLink).catch(() => {})
       } catch {
         // 部分瀏覽器限制剪貼簿，靜默失敗
       }

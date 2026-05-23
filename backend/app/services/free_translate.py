@@ -27,6 +27,9 @@ async def _get_client() -> httpx.AsyncClient:
 
 class FreeTranslateService:
     _LANG_MAP = {
+        'japanese': 'ja', 'jpn': 'ja',
+        'korean': 'ko', 'kor': 'ko',
+        'english': 'en', 'eng': 'en',
         'zh-tw': 'zh-TW', 'zh-hk': 'zh-TW',
         'chinese (traditional)': 'zh-TW', 'zho-tw': 'zh-TW',
         'traditional chinese': 'zh-TW',
@@ -56,7 +59,9 @@ class FreeTranslateService:
         source_lang: Optional[str] = None
     ) -> Dict:
         start = time.time()
-        src = self._convert_lang(source_lang) if source_lang else 'auto'
+        # STT providers sometimes return broad names or wrong language labels.
+        # Let Google auto-detect source text for better cross-language speech results.
+        src = 'auto'
         tgt = self._convert_lang(target_lang)
 
         try:
