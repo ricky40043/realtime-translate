@@ -198,11 +198,6 @@ onMounted(async () => {
   await loadRoom()
   await connectWebSocket()
 
-  // 如果是首次進入，自動顯示設定modal
-  if (isFirstTime.value) {
-    showSettingsModal.value = true
-  }
-
   // 從首頁建立房間跳轉過來時，自動展開分享面板
   if (route.query.share === 'true') {
     showShareModal.value = true
@@ -468,8 +463,8 @@ function formatTimestamp(timestamp: string | null) {
 
 // 檢查是否首次進入
 function checkFirstTimeUser() {
-  const hasSettings = localStorage.getItem('userAdvancedSettings')
-  isFirstTime.value = !hasSettings
+  // 配合取消強制輸入名稱的流程，在此恆設為 false
+  isFirstTime.value = false
 }
 
 // 開啟設定Modal

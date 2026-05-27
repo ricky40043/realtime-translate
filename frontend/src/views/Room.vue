@@ -2,24 +2,13 @@
   <div class="home">
     <header class="home-header">
       <div class="logo">🌍</div>
-      <h1>多語言即時翻譯</h1>
+      <h1>frontend</h1>
       <p>語音即時翻譯，多語言無障礙溝通</p>
     </header>
 
     <main class="home-main">
       <!-- 個人設定 -->
       <section class="card profile-card">
-        <div class="field">
-          <label>你的名稱</label>
-          <input
-            v-model="displayName"
-            @input="saveProfile"
-            placeholder="輸入你的名稱"
-            class="input-field"
-            type="text"
-            autocomplete="nickname"
-          />
-        </div>
         <div class="field">
           <label>我說的語言</label>
           <select v-model="inputLang" @change="saveProfile" class="select-field">

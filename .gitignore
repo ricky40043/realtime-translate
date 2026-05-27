@@ -108,3 +108,4 @@ Desktop.ini
 *.egg-info
 dist/
 build/
+_env
