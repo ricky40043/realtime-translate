@@ -2,7 +2,7 @@
   <div class="home">
     <header class="home-header">
       <div class="logo">🌍</div>
-      <h1>frontend</h1>
+      <h1>多語言即時翻譯</h1>
       <p>語音即時翻譯，多語言無障礙溝通</p>
     </header>
 
