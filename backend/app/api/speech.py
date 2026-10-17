@@ -50,6 +50,34 @@ def filter_ai_default_responses(text: str) -> str:
         
     return text_cleaned
 
+# Whisper 自動偵測回傳的是語言全名（如 "Spanish"），轉成兩碼代碼方便比對
+_WHISPER_LANG_NAMES = {
+    'chinese': 'zh', 'mandarin': 'zh', 'cantonese': 'zh', 'english': 'en', 'japanese': 'ja',
+    'korean': 'ko', 'spanish': 'es', 'french': 'fr', 'german': 'de', 'italian': 'it',
+    'portuguese': 'pt', 'russian': 'ru', 'arabic': 'ar', 'hindi': 'hi', 'thai': 'th',
+    'vietnamese': 'vi', 'indonesian': 'id', 'malay': 'ms',
+}
+
+def base_lang(code: Optional[str]) -> str:
+    """'zh-TW' / 'Chinese' / 'zh' -> 'zh'"""
+    if not code:
+        return ''
+    lower = code.strip().lower()
+    return _WHISPER_LANG_NAMES.get(lower, lower.replace('_', '-').split('-')[0])
+
+async def get_room_spoken_langs(db: asyncpg.Connection, room_id: str, speaker: Optional[dict]) -> set:
+    """房間中預期會出現的語言：在線使用者與講者的慣用語 + 主板語言"""
+    online_users = await manager.get_room_users(room_id)
+    users_map = await UserRepo(db).get_users_batch(list(online_users)) if online_users else {}
+    langs = set()
+    for user in list(users_map.values()) + ([speaker] if speaker else []):
+        if user:
+            langs.add(base_lang(user.get("input_lang") or user.get("preferred_lang")))
+    room = await RoomRepo(db).get_room(room_id)
+    langs.add(base_lang((room or {}).get("default_board_lang") or "zh-TW"))
+    langs.discard('')
+    return langs
+
 class SpeechResponse(BaseModel):
     message_id: str
     transcript: str
@@ -182,6 +210,20 @@ async def upload_speech(
         t_stt_start = time.time()
         stt_result = await stt_service.transcribe_audio(audio_data, audio.content_type, language_code)
         print(f"⏱️ [PERF][STT] Groq 語音辨識耗時: {time.time() - t_stt_start:.3f} 秒")
+
+        # 自動偵測語言時，短句常被誤判（中文被判成西班牙文、日文）。
+        # 偵測結果不是房間裡任何人的語言時，改用講者的慣用語重新辨識一次。
+        if not language_code:
+            speaker = await UserRepo(db).get_user(current_user)
+            speaker_lang = (speaker or {}).get("input_lang") or (speaker or {}).get("preferred_lang")
+            detected = base_lang(stt_result.get("language"))
+            room_langs = await get_room_spoken_langs(db, room_id, speaker)
+            if speaker_lang and detected and detected not in room_langs:
+                print(f"🔁 [STT] 偵測到 {stt_result.get('language')}，不在房間語言 {room_langs} 中，改用講者慣用語 {speaker_lang} 重新辨識")
+                t_retry = time.time()
+                stt_result = await stt_service.transcribe_audio(audio_data, audio.content_type, speaker_lang)
+                stt_result["language"] = speaker_lang
+                print(f"⏱️ [PERF][STT] 重新辨識耗時: {time.time() - t_retry:.3f} 秒，結果: {stt_result.get('text', '')[:50]}")
         
         transcript = filter_ai_default_responses(stt_result["text"])
         if not transcript:
