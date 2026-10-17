@@ -32,7 +32,7 @@
             <span class="lang-info">{{ latestMessage.sourceLang }} → {{ outputLang }}</span>
             <span class="timestamp">{{ formatTimestamp(latestMessage.timestamp) }}</span>
           </div>
-          <div class="subtitle-text">{{ latestMessage.text }}</div>
+          <div class="subtitle-text" :class="{ partial: latestMessage.partial }">{{ latestMessage.text }}<span v-if="latestMessage.partial" class="typing-dots">…</span></div>
         </div>
         <div v-else class="waiting-message">
           <div class="waiting-icon">👂</div>
@@ -111,9 +111,8 @@ interface AdvancedSettings {
   outputLang: string
   segmentThreshold: number    // 語音檢測閾值（統一用於語音檢測和自動分段）
   silenceTimeout: number      // 靜音超時時間（多久沒聲音後結束錄音）
-  minSegmentTime: number      // 最短分段時間
-  segmentDelay: number        // 分段延遲時間（低於閾值後持續多久才送出）
-  maxRecordingTime: number    // 最長連續錄音時間
+  segmentDelay: number        // 停頓多久算一句講完（秒）
+  maxSegmentTime: number      // 一直講不停時，最長幾秒先送出一段翻譯
 }
 
 const route = useRoute()
@@ -142,9 +141,8 @@ const userSettings = ref<AdvancedSettings>({
   outputLang: 'zh-TW',
   segmentThreshold: 10,     // 10%語音檢測閾值
   silenceTimeout: 5,        // 5秒靜音超時
-  minSegmentTime: 1.0,      // 1秒最短分段時間
-  segmentDelay: 1.0,        // 1秒分段延遲
-  maxRecordingTime: 30      // 30秒最長連續錄音
+  segmentDelay: 0.6,        // 停頓 0.6 秒算一句講完
+  maxSegmentTime: 3         // 最長 3 秒就先送出翻譯
 })
 
 // 語音相關狀態（由SmartVoiceRecorder管理）
@@ -340,7 +338,8 @@ function handleWebSocketMessage(message: any) {
           sourceLang: message.sourceLang,
           targetLang: message.targetLang,
           timestamp: message.timestamp,
-          type: 'personal'
+          type: 'personal',
+          partial: !!message.partial
         })
       }
       break
@@ -374,6 +373,12 @@ function loadUserSettings() {
   const savedAdvancedSettings = localStorage.getItem('userAdvancedSettings')
   if (savedAdvancedSettings) {
     const advanced = JSON.parse(savedAdvancedSettings)
+    if (advanced.maxSegmentTime === undefined) {
+      // 舊版設定（停頓 1 秒、最長 30 秒）換成分段即時翻譯的預設值
+      delete advanced.segmentDelay
+      delete advanced.minSegmentTime
+      delete advanced.maxRecordingTime
+    }
     userSettings.value = { ...userSettings.value, ...advanced }
     inputLang.value = advanced.inputLang || 'zh-TW'
     outputLang.value = advanced.outputLang || 'zh-TW'
@@ -919,6 +924,21 @@ function getLanguageName(langCode: string): string {
   color: #333;
   font-weight: 500;
   min-height: 3rem;
+}
+
+/* 還在講的句子 */
+.subtitle-text.partial {
+  color: #666;
+}
+
+.typing-dots {
+  margin-left: 0.15em;
+  color: #999;
+  animation: typing-blink 1s steps(2, start) infinite;
+}
+
+@keyframes typing-blink {
+  to { visibility: hidden; }
 }
 
 .waiting-message {

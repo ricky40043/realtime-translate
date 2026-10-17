@@ -24,7 +24,7 @@ class GroqSTTService:
                 self.use_mock = True
     
     async def transcribe_audio(self, audio_data: bytes, content_type: str = "audio/webm", 
-                             language_code: str = "zh-TW") -> Dict:
+                             language_code: str = "zh-TW", prompt: Optional[str] = None) -> Dict:
         """使用 Groq API 進行語音轉文字"""
         if self.use_mock:
             return await self._mock_transcribe(audio_data, language_code)
@@ -47,7 +47,7 @@ class GroqSTTService:
                 result = await loop.run_in_executor(
                     None, 
                     self._groq_transcribe_sync,
-                    temp_file_path, language_code
+                    temp_file_path, language_code, prompt
                 )
                 
                 latency_ms = int((time.time() - start_time) * 1000)
@@ -72,7 +72,7 @@ class GroqSTTService:
             # 回退到模擬轉錄
             return await self._mock_transcribe(audio_data, language_code)
     
-    def _groq_transcribe_sync(self, audio_file_path: str, language_code: str) -> Dict:
+    def _groq_transcribe_sync(self, audio_file_path: str, language_code: str, prompt: Optional[str] = None) -> Dict:
         """同步執行 Groq STT API 調用"""
         try:
             # 開啟音頻檔案
@@ -86,6 +86,9 @@ class GroqSTTService:
                 }
                 if converted_lang:
                     kwargs["language"] = converted_lang
+                if prompt:
+                    # 前一段的文字當上下文，讓被切開的句子接得順
+                    kwargs["prompt"] = prompt
                 # 不傳 language 時 Whisper 自動偵測
                 transcription = self.client.audio.transcriptions.create(**kwargs)
                 
@@ -101,46 +104,9 @@ class GroqSTTService:
                 }
                 
         except Exception as e:
-            print(f"Groq 同步轉錄錯誤: {e}")
-            # 如果 Groq API 失敗，使用智慧回退
-            return self._intelligent_fallback(audio_file_path, language_code)
-    
-    def _intelligent_fallback(self, audio_file_path: str, language_code: str) -> Dict:
-        """智慧回退方案"""
-        try:
-            # 根據檔案大小估算內容
-            file_size = os.path.getsize(audio_file_path)
-            
-            if language_code.startswith('zh'):
-                if file_size < 5000:
-                    text = "你好"
-                elif file_size < 15000:
-                    text = "你好，我正在使用 Groq 語音辨識"
-                else:
-                    text = "你好，我正在測試 Groq 語音辨識服務，效果很不錯"
-            elif language_code.startswith('en'):
-                if file_size < 5000:
-                    text = "Hello"
-                elif file_size < 15000:
-                    text = "Hello, I am using Groq speech recognition"
-                else:
-                    text = "Hello, I am testing Groq speech recognition service, it works great"
-            else:
-                text = "Hello, testing speech recognition"
-            
-            return {
-                "text": text,
-                "confidence": 0.8,
-                "language": language_code
-            }
-            
-        except Exception as e:
-            print(f"智慧回退錯誤: {e}")
-            return {
-                "text": "語音辨識錯誤",
-                "confidence": 0.1,
-                "language": language_code
-            }
+            print(f"❌ Groq 同步轉錄錯誤: {e}")
+            # 失敗就回空字串（會被過濾掉），不要編造假文字
+            return {"text": "", "confidence": 0.0, "language": language_code}
     
     def _convert_lang_code(self, lang_code: str) -> str:
         """轉換語言代碼格式以符合 Groq API，回傳 None 表示自動偵測"""

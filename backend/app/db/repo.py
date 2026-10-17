@@ -128,7 +128,14 @@ class MessageRepo:
             message_id, room_id, speaker_id, source_lang, text, is_final
         )
         return message_id
-    
+
+    async def update_message_text(self, message_id: str, text: str, is_final: bool):
+        """更新分段累積中的訊息文字"""
+        await self.conn.execute(
+            "UPDATE message SET text = $2, is_final = $3 WHERE id = $1",
+            message_id, text, is_final
+        )
+
     async def save_translation(self, message_id: str, target_lang: str, text: str, 
                              latency_ms: Optional[int] = None, quality: Optional[float] = None):
         """儲存翻譯"""
