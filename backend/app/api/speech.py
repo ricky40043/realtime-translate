@@ -212,6 +212,9 @@ async def broadcast_speech_translations(
             user = users_map.get(user_id)
             if user:
                 user_input_lang = user.get("input_lang") or user.get("preferred_lang", "zh-TW")
+                # 講者看自己的話：顯示 output_lang 翻譯；聽者看別人的話：顯示自己的慣用語
+                if user_id == speaker_id and user.get("output_lang"):
+                    user_input_lang = user["output_lang"]
                 translated_text = translations.get(user_input_lang, {}).get("text", original_text)
                 personal_message = {
                     "type": "personal.subtitle",
