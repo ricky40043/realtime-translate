@@ -106,26 +106,20 @@
 
               <div class="form-group">
                 <label class="form-label">
-                  最短分段時間
-                  <span class="threshold-value">{{ localSettings.minSegmentTime }}秒</span>
-                </label>
-                <input v-model.number="localSettings.minSegmentTime" type="range" min="0.5" max="3" step="0.5" class="form-range" />
-              </div>
-
-              <div class="form-group">
-                <label class="form-label">
-                  分段延遲時間
+                  斷句停頓時間
                   <span class="threshold-value">{{ localSettings.segmentDelay }}秒</span>
                 </label>
-                <input v-model.number="localSettings.segmentDelay" type="range" min="0.5" max="3" step="0.5" class="form-range" />
+                <input v-model.number="localSettings.segmentDelay" type="range" min="0.3" max="2" step="0.1" class="form-range" />
+                <p class="form-help">停頓超過此時間就當成一句講完，整句定稿翻譯</p>
               </div>
 
               <div class="form-group">
                 <label class="form-label">
-                  最長連續錄音
-                  <span class="threshold-value">{{ localSettings.maxRecordingTime }}秒</span>
+                  最長分段時間
+                  <span class="threshold-value">{{ localSettings.maxSegmentTime }}秒</span>
                 </label>
-                <input v-model.number="localSettings.maxRecordingTime" type="range" min="5" max="60" class="form-range" />
+                <input v-model.number="localSettings.maxSegmentTime" type="range" min="2" max="10" step="1" class="form-range" />
+                <p class="form-help">一直講不停時，每隔這麼久就先翻譯一次，之後接成同一句</p>
               </div>
             </div>
           </section>
@@ -185,9 +179,8 @@ interface AdvancedSettings {
   outputLang: string
   segmentThreshold: number    // 語音檢測閾值（合併聲音檢測閾值和自動分段閾值）
   silenceTimeout: number      // 靜音超時時間（多久沒聲音後結束錄音）
-  minSegmentTime: number      // 最短分段時間（合併最短錄音時間和最短分段時間）
-  segmentDelay: number        // 分段延遲時間（低於閾值後持續多久才送出）
-  maxRecordingTime: number    // 最長連續錄音時間
+  segmentDelay: number        // 停頓多久算一句講完（秒）
+  maxSegmentTime: number      // 一直講不停時，最長幾秒先送出一段翻譯
 }
 
 interface Props {
@@ -215,9 +208,8 @@ const defaultSettings: AdvancedSettings = {
   outputLang: 'zh-TW',
   segmentThreshold: 10,     // 10%語音檢測閾值
   silenceTimeout: 5,        // 5秒靜音超時
-  minSegmentTime: 1.0,      // 1秒最短分段時間
-  segmentDelay: 1.0,        // 1秒分段延遲
-  maxRecordingTime: 30      // 30秒最長連續錄音
+  segmentDelay: 0.6,        // 停頓 0.6 秒算一句講完
+  maxSegmentTime: 3         // 最長 3 秒就先送出翻譯
 }
 
 // 本地設定狀態

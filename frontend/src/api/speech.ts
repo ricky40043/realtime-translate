@@ -16,10 +16,23 @@ export const speechApi = {
   /**
    * 上傳語音文件進行處理
    */
-  async upload(roomId: string, audioBlob: Blob, userLang?: string, speakerName?: string): Promise<any> {
+  async upload(
+    roomId: string,
+    audioBlob: Blob,
+    userLang?: string,
+    speakerName?: string,
+    segment?: { utteranceId: string; window: number; isFinal: boolean }
+  ): Promise<any> {
     const formData = new FormData()
-    formData.append('audio', audioBlob, 'audio.webm')
+    const ext = audioBlob.type.includes('wav') ? 'wav' : audioBlob.type.includes('mp4') ? 'm4a' : 'webm'
+    formData.append('audio', audioBlob, `audio.${ext}`)
     formData.append('room_id', roomId)
+    if (segment) {
+      // 分段即時翻譯：同一句話共用 utterance_id，is_final=false 表示還沒講完
+      formData.append('utterance_id', segment.utteranceId)
+      formData.append('window', String(segment.window))
+      formData.append('is_final', String(segment.isFinal))
+    }
     if (userLang) {
       formData.append('language_code', userLang)
     }

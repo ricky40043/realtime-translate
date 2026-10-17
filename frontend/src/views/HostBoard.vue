@@ -37,14 +37,14 @@
             v-for="message in sessionStore.boardMessages" 
             :key="message.id"
             class="message-item"
-            :class="{ 'own-message': message.speakerId === sessionStore.user?.id }"
+            :class="{ 'own-message': message.speakerId === sessionStore.user?.id, partial: message.partial }"
           >
             <div class="message-header">
               <span class="speaker-name">{{ message.speakerName }}</span>
               <span class="message-time">{{ formatTime(message.timestamp) }}</span>
               <span class="language-badge">{{ message.sourceLang }} → {{ message.targetLang }}</span>
             </div>
-            <div class="message-content">{{ message.text }}</div>
+            <div class="message-content">{{ message.text }}<span v-if="message.partial" class="typing-dots">…</span></div>
           </div>
         </div>
       </div>
@@ -187,7 +187,10 @@ watch(() => route.params.roomId, async (newRoomId) => {
 })
 
 // 監聽訊息變化，自動滾動到底部
-watch(() => sessionStore.boardMessages.length, async () => {
+watch(() => {
+  const list = sessionStore.boardMessages
+  return `${list.length}:${list[list.length - 1]?.text || ''}`
+}, async () => {
   await nextTick()
   scrollToBottom()
 })
@@ -363,7 +366,8 @@ function handleWebSocketMessage(message: any) {
         sourceLang: message.sourceLang,
         targetLang: message.targetLang,
         timestamp: message.timestamp,
-        type: 'board'
+        type: 'board',
+        partial: !!message.partial
       })
       console.log('📢 已添加到 boardMessages，當前數量:', sessionStore.boardMessages.length)
       break
@@ -692,6 +696,21 @@ function scrollToBottom() {
   line-height: 1.5;
   color: #333;
   font-weight: 500;
+}
+
+/* 還在講的句子：顏色淡一點，講完定稿後恢復 */
+.message-item.partial .message-content {
+  color: #666;
+}
+
+.typing-dots {
+  margin-left: 0.15em;
+  color: #999;
+  animation: typing-blink 1s steps(2, start) infinite;
+}
+
+@keyframes typing-blink {
+  to { visibility: hidden; }
 }
 
 /* 滾動條樣式 */

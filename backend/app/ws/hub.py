@@ -79,8 +79,8 @@ class ConnectionManager:
                     "timestamp": datetime.utcnow().isoformat()
                 })
             
-            # 如果房間沒有人了，清除房間
-            if not self.rooms[room_id]:
+            # 如果房間沒有人了，清除房間（廣播期間可能已被其他斷線流程清掉）
+            if room_id in self.rooms and not self.rooms[room_id]:
                 del self.rooms[room_id]
         
         remaining_users = len(self.rooms.get(room_id, {}))
@@ -101,7 +101,8 @@ class ConnectionManager:
                 print(f"📡 內容: {message.get('text', 'N/A')}")
             
             disconnected = []
-            for user_id, websocket in self.rooms[room_id].items():
+            # 複製一份再迭代：送訊息時會 await，期間其他連線斷線會改到這個 dict
+            for user_id, websocket in list(self.rooms[room_id].items()):
                 try:
                     await self.send_to_websocket(websocket, message)
                 except:

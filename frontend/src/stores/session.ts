@@ -30,6 +30,7 @@ export interface Message {
   targetLang: string
   timestamp: string
   type: 'personal' | 'board'
+  partial?: boolean  // 這句還在講，之後同一個 id 會更新
 }
 
 export const useSessionStore = defineStore('session', () => {
@@ -84,7 +85,16 @@ export const useSessionStore = defineStore('session', () => {
     currentRoom.value = room
   }
   
+  // 分段即時翻譯會用同一個 id 多次送來（越講越長），已存在就原地更新
+  function upsert(list: Message[], message: Message): boolean {
+    const idx = list.findIndex(m => m.id === message.id)
+    if (idx === -1) return false
+    list[idx] = { ...list[idx], ...message, timestamp: list[idx].timestamp || message.timestamp }
+    return true
+  }
+
   function addPersonalSubtitle(message: Message) {
+    if (upsert(personalSubtitles.value, message)) return
     personalSubtitles.value.push(message)
     // 保持最近 50 條字幕
     if (personalSubtitles.value.length > 50) {
@@ -93,6 +103,7 @@ export const useSessionStore = defineStore('session', () => {
   }
   
   function addBoardMessage(message: Message) {
+    if (upsert(boardMessages.value, message)) return
     boardMessages.value.push(message)
     // 保持最近 100 條訊息
     if (boardMessages.value.length > 100) {
