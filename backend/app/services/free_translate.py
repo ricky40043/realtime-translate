@@ -5,11 +5,24 @@
 """
 
 import asyncio
+import os
 import time
 import httpx
 from typing import Dict, List, Optional
 
-print("✅ 使用 Google Translate JSON 端點（async httpx）")
+print("✅ 翻譯：Groq LLM 為主，Google Translate JSON 端點為備援（async httpx）")
+
+GROQ_TRANSLATE_MODEL = os.getenv("GROQ_TRANSLATE_MODEL", "openai/gpt-oss-120b")
+
+# 給 LLM 的目標語言名稱（明確指定繁/簡，避免模型自行判斷）
+_TARGET_NAMES = {
+    'zh-TW': 'Traditional Chinese (Taiwan, 繁體中文)',
+    'zh-CN': 'Simplified Chinese (简体中文)',
+    'en': 'English', 'ja': 'Japanese', 'ko': 'Korean', 'es': 'Spanish',
+    'fr': 'French', 'de': 'German', 'it': 'Italian', 'pt': 'Portuguese',
+    'ru': 'Russian', 'ar': 'Arabic', 'hi': 'Hindi', 'th': 'Thai',
+    'vi': 'Vietnamese', 'id': 'Indonesian', 'ms': 'Malay',
+}
 
 # 持久化的 async HTTP 客戶端（連線池複用）
 _http_client: Optional[httpx.AsyncClient] = None
@@ -64,45 +77,85 @@ class FreeTranslateService:
         src = 'auto'
         tgt = self._convert_lang(target_lang)
 
-        try:
-            client = await _get_client()
-            resp = await client.get(
-                'https://translate.googleapis.com/translate_a/single',
-                params={
-                    'client': 'gtx',
-                    'sl': src,
-                    'tl': tgt,
-                    'dt': 't',
-                    'q': text,
+        errors = []
+        for provider in (self._groq_translate, self._google_translate):
+            try:
+                translated, provider_name = await provider(text, tgt)
+                latency_ms = int((time.time() - start) * 1000)
+                print(f"   [Translate] {provider_name} {src}->{tgt} 耗時: {latency_ms}ms")
+                return {
+                    'text': translated,
+                    'source_lang': src,
+                    'target_lang': target_lang,
+                    'latency_ms': latency_ms,
+                    'quality': 0.9,
+                    'provider': provider_name,
                 }
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            # data[0] 是句子列表，每個元素 [translated, original, ...]
-            translated = ''.join(seg[0] for seg in data[0] if seg and seg[0])
-            latency_ms = int((time.time() - start) * 1000)
-            print(f"   [Translate] {src}->{tgt} 耗時: {latency_ms}ms")
+            except Exception as e:
+                errors.append(f"{provider.__name__}: {e}")
+                print(f"   [Translate] {provider.__name__} {src}->{tgt} 失敗: {e}")
 
-            return {
-                'text': translated,
-                'source_lang': src,
-                'target_lang': target_lang,
-                'latency_ms': latency_ms,
-                'quality': 0.9,
-                'provider': 'google_translate_json',
-            }
+        latency_ms = int((time.time() - start) * 1000)
+        print(f"   [Translate] ❌ 所有翻譯服務皆失敗({latency_ms}ms)，回傳原文")
+        return {
+            'text': text,
+            'source_lang': source_lang,
+            'target_lang': target_lang,
+            'latency_ms': latency_ms,
+            'quality': 0.0,
+            'error': '; '.join(errors),
+        }
 
-        except Exception as e:
-            latency_ms = int((time.time() - start) * 1000)
-            print(f"   [Translate] {src}->{tgt} 失敗({latency_ms}ms): {e}")
-            return {
-                'text': text,
-                'source_lang': source_lang,
-                'target_lang': target_lang,
-                'latency_ms': latency_ms,
-                'quality': 0.0,
-                'error': str(e),
+    async def _groq_translate(self, text: str, tgt: str):
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY 未設定")
+        target_name = _TARGET_NAMES.get(tgt, tgt)
+        client = await _get_client()
+        resp = await client.post(
+            'https://api.groq.com/openai/v1/chat/completions',
+            headers={'Authorization': f'Bearer {api_key}'},
+            json={
+                'model': GROQ_TRANSLATE_MODEL,
+                'temperature': 0,
+                'reasoning_effort': 'low',
+                'messages': [
+                    {
+                        'role': 'system',
+                        'content': (
+                            f"You are a real-time interpreter. Translate the user's message into {target_name}. "
+                            "The message is a speech-recognition transcript and may contain mixed languages or small errors; "
+                            "translate the intended meaning naturally. If it is already in the target language, return it "
+                            "unchanged (but convert Chinese script to the target variant). Output only the translation, "
+                            "with no quotes, notes or explanations."
+                        ),
+                    },
+                    {'role': 'user', 'content': text},
+                ],
+            },
+        )
+        resp.raise_for_status()
+        translated = (resp.json()['choices'][0]['message']['content'] or '').strip()
+        if not translated:
+            raise RuntimeError("Groq 回傳空白翻譯")
+        return translated, f'groq:{GROQ_TRANSLATE_MODEL}'
+
+    async def _google_translate(self, text: str, tgt: str):
+        client = await _get_client()
+        resp = await client.get(
+            'https://translate.googleapis.com/translate_a/single',
+            params={
+                'client': 'gtx',
+                'sl': 'auto',
+                'tl': tgt,
+                'dt': 't',
+                'q': text,
             }
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        # data[0] 是句子列表，每個元素 [translated, original, ...]
+        return ''.join(seg[0] for seg in data[0] if seg and seg[0]), 'google_translate_json'
 
     async def batch_translate(
         self,

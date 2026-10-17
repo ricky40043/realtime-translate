@@ -30,7 +30,7 @@
     </header>
 
     <!-- 主板訊息滿版顯示 -->
-    <main class="host-main">
+    <main class="host-main" :class="{ 'with-qr': showBoardQr }">
       <div class="board-messages-container">
         <div class="board-messages" ref="messagesContainer">
           <div 
@@ -48,6 +48,14 @@
           </div>
         </div>
       </div>
+
+      <!-- 常駐 QR Code：讓現場的人直接掃描加入房間 -->
+      <aside v-if="showBoardQr" class="board-qr">
+        <button type="button" class="board-qr-close" @click="showBoardQr = false" aria-label="隱藏 QR Code">×</button>
+        <canvas ref="boardQrCanvas" class="board-qr-code"></canvas>
+        <div class="board-qr-caption">掃描加入房間</div>
+      </aside>
+      <button v-else type="button" class="board-qr-show" @click="showBoardQr = true">顯示 QR Code</button>
 
       <!-- Debug 面板 -->
       <div v-if="showDebug" class="debug-panel">
@@ -137,6 +145,8 @@ const qrCanvas = ref<HTMLCanvasElement>()
 const urlInput = ref<HTMLInputElement>()
 const urlCopied = ref(false)
 const userUrl = ref('')
+const showBoardQr = ref(true)
+const boardQrCanvas = ref<HTMLCanvasElement>()
 
 // 初始化
 onMounted(async () => {
@@ -181,6 +191,22 @@ watch(() => sessionStore.boardMessages.length, async () => {
   await nextTick()
   scrollToBottom()
 })
+
+// 白板常駐 QR Code：房間確定或重新顯示時產生
+watch([roomId, showBoardQr], async () => {
+  if (!roomId.value || !showBoardQr.value) return
+  await nextTick()
+  if (!boardQrCanvas.value) return
+  try {
+    await QRCode.toCanvas(boardQrCanvas.value, `${window.location.origin}/user?roomId=${roomId.value}`, {
+      width: 180,
+      margin: 1,
+      color: { dark: '#000000', light: '#FFFFFF' }
+    })
+  } catch (error) {
+    console.error('生成白板 QR Code 失敗:', error)
+  }
+}, { immediate: true })
 
 // 監聽分享模態窗顯示，生成 QR Code
 watch(showShareModal, async (isShown) => {
@@ -540,6 +566,69 @@ function scrollToBottom() {
   flex: 1;
   padding: 2rem;
   overflow: hidden;
+  position: relative;
+}
+
+/* QR Code 獨立佔右側一欄，不蓋住訊息 */
+.host-main.with-qr {
+  padding-right: calc(2rem + 236px);
+}
+
+.board-qr {
+  position: absolute;
+  right: 2rem;
+  bottom: 2rem;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.9rem 0.9rem 0.6rem;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+.board-qr-code {
+  display: block;
+  width: 180px;
+  height: 180px;
+}
+
+.board-qr-caption {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.board-qr-close {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: #6c757d;
+  color: #fff;
+  font-size: 1rem;
+  line-height: 26px;
+  cursor: pointer;
+}
+
+.board-qr-show {
+  position: absolute;
+  right: 2.5rem;
+  bottom: 2.5rem;
+  z-index: 20;
+  padding: 0.5rem 0.9rem;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #333;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
 }
 
 .board-messages-container {
@@ -687,6 +776,14 @@ function scrollToBottom() {
   
   .host-main {
     padding: 1rem;
+  }
+
+  .host-main.with-qr {
+    padding-right: 1rem;
+  }
+
+  .board-qr, .board-qr-show {
+    display: none;
   }
   
   .board-messages-container {
