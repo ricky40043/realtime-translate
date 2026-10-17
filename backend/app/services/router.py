@@ -2,6 +2,14 @@ from typing import Set, Dict, List, Optional
 import asyncpg
 from ..db.repo import RoomRepo, UserRepo
 
+def board_lang_for(speaker: Optional[dict], override: Optional[str], room: Optional[dict]) -> str:
+    """講者說話時主板顯示的語言：房間覆寫 > 講者 output_lang > 房間預設"""
+    if override:
+        return override
+    if speaker and speaker.get("output_lang"):
+        return speaker["output_lang"]
+    return (room or {}).get("default_board_lang") or "zh-TW"
+
 class LanguageRouter:
     """語言路由邏輯，決定訊息需要翻譯成哪些語言"""
     
@@ -45,9 +53,8 @@ class LanguageRouter:
         if speaker and speaker.get("output_lang"):
             personal_langs.add(speaker["output_lang"])
 
-        # 主板視圖：使用房間的主板語言設定。
-        # 講者自己的 output_lang 是個人設定，不應決定全場白板語言。
-        board_lang = override_map.get(speaker_id, room["default_board_lang"] or "zh-TW")
+        # 主板視圖：講者在設定裡選的「主板顯示語言」(output_lang)，沒設才用房間預設
+        board_lang = board_lang_for(speaker, override_map.get(speaker_id), room)
         
         board_langs = {board_lang}
         
