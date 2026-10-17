@@ -29,7 +29,7 @@
         <div v-if="latestMessage" class="current-subtitle">
           <div class="subtitle-meta">
             <span class="speaker">{{ latestMessage.speakerName }}</span>
-            <span class="lang-info">{{ latestMessage.sourceLang }} → {{ outputLang }}</span>
+            <span class="lang-info">{{ latestMessage.sourceLang }} → {{ latestMessage.targetLang }}</span>
             <span class="timestamp">{{ formatTimestamp(latestMessage.timestamp) }}</span>
           </div>
           <div class="subtitle-text" :class="{ partial: latestMessage.partial }">{{ latestMessage.text }}<span v-if="latestMessage.partial" class="typing-dots">…</span></div>
@@ -329,7 +329,8 @@ function handleWebSocketMessage(message: any) {
     case 'personal.subtitle':
       console.log('👤 個人字幕:', message.text, `(${message.speakerName})`, `[${message.sourceLang}→${message.targetLang}]`)
       // 個人字幕：使用我的慣用語顯示
-      if (message.targetLang === inputLang.value) {
+      // 別人的話翻成慣用語，自己的話翻成輸出語言（後端只會送一則給我）
+      if (message.targetLang === inputLang.value || message.targetLang === outputLang.value) {
         sessionStore.addPersonalSubtitle({
           id: message.messageId,
           speakerId: message.speakerId || '',
