@@ -8,7 +8,7 @@ from ..deps import get_db, get_current_user
 from ..db.repo import MessageRepo, RoomRepo, UserRepo
 from ..services.stt import stt_service
 from ..services.translate import translation_service, detect_language
-from ..services.router import LanguageRouter
+from ..services.router import LanguageRouter, board_lang_for
 from ..ws.hub import manager
 
 router = APIRouter()
@@ -227,8 +227,10 @@ async def broadcast_speech_translations(
 
         # 廣播主板
         if speaker:
-            room = await RoomRepo(db).get_room(room_id)
-            board_lang = room.get("default_board_lang", "zh-TW") if room else "zh-TW"
+            room_repo = RoomRepo(db)
+            room = await room_repo.get_room(room_id)
+            override = {o["speakerId"]: o["targetLang"] for o in await room_repo.get_lang_overrides(room_id)}.get(speaker_id)
+            board_lang = board_lang_for(speaker, override, room)
             speaker_board_text = translations.get(board_lang, {}).get("text", original_text)
             board_message = {
                 "type": "board.post",
