@@ -25,7 +25,7 @@
             </div>
             
             <div class="form-group">
-              <label class="form-label">我要看到的字幕語言</label>
+              <label class="form-label">我的語言</label>
               <select v-model="localSettings.inputLang" class="form-select" required>
                 <option value="zh-TW">繁體中文</option>
                 <option value="zh-CN">簡體中文</option>
@@ -47,12 +47,11 @@
                 <option value="ms">Bahasa Melayu (馬來文)</option>
                 <option value="yue">廣東話</option>
               </select>
-              <p class="form-help">別人說話時，您看到的翻譯語言</p>
+              <p class="form-help">我說的語言；別人說話時，手機字幕也翻成這個語言</p>
             </div>
 
-            <!-- 手機版不需要白板語言設定 -->
-            <div v-if="!isMobile" class="form-group">
-              <label class="form-label">大白板語言（我說話時）</label>
+            <div class="form-group">
+              <label class="form-label">主板顯示語言（我說話時）</label>
               <select v-model="localSettings.outputLang" class="form-select" required>
                 <option value="zh-TW">繁體中文</option>
                 <option value="zh-CN">簡體中文</option>
@@ -74,7 +73,7 @@
                 <option value="ms">Bahasa Melayu (馬來文)</option>
                 <option value="yue">廣東話</option>
               </select>
-              <p class="form-help">您說話時，大白板上顯示的翻譯語言</p>
+              <p class="form-help">您說話時，主板翻成這個語言</p>
             </div>
           </section>
 
@@ -170,7 +169,6 @@
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
 
-const isMobile = window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 const showAdvanced = ref(false)
 
 interface AdvancedSettings {

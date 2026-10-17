@@ -10,6 +10,10 @@ from typing import Dict, Optional
 import tempfile
 from groq import Groq
 
+# 實測：靜音約 0.7、正常說話約 0.02
+NO_SPEECH_THRESHOLD = 0.5
+MAX_COMPRESSION_RATIO = 2.4
+
 class GroqSTTService:
     def __init__(self):
         self.api_key = os.getenv("GROQ_API_KEY")
@@ -56,6 +60,7 @@ class GroqSTTService:
                     "text": result["text"],
                     "confidence": result.get("confidence", 0.9),
                     "language": result.get("language", language_code),
+                    "no_speech_prob": result.get("no_speech_prob", 0.0),
                     "latency_ms": latency_ms,
                     "provider": "groq"
                 }
@@ -96,11 +101,26 @@ class GroqSTTService:
                 text = transcription.text
                 confidence = getattr(transcription, 'confidence', 0.9)
                 detected_language = getattr(transcription, 'language', language_code)
-                
+
+                # Whisper 在沒人講話（安靜、雜音）時會編字幕（「作詞 李宗盛」「請訂閱」），
+                # 每段都附「沒有語音的機率」，高的段落直接丟掉；壓縮比過高代表同一句一直重複
+                segments = getattr(transcription, 'segments', None) or []
+                no_speech = 0.0
+                if segments and isinstance(segments[0], dict):
+                    no_speech = max(s.get("no_speech_prob", 0.0) for s in segments)
+                    kept = [s for s in segments
+                            if s.get("no_speech_prob", 0.0) < NO_SPEECH_THRESHOLD
+                            and s.get("compression_ratio", 0.0) < MAX_COMPRESSION_RATIO]
+                    if len(kept) != len(segments):
+                        dropped = [s.get("text", "") for s in segments if s not in kept]
+                        print(f"🔇 [STT] 丟棄疑似幻覺段落: {dropped}")
+                        text = "".join(s.get("text", "") for s in kept)
+
                 return {
                     "text": text,
                     "confidence": confidence,
-                    "language": detected_language
+                    "language": detected_language,
+                    "no_speech_prob": no_speech
                 }
                 
         except Exception as e:

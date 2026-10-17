@@ -48,10 +48,7 @@ class LanguageRouter:
                 user_input_lang = user.get("input_lang") or user.get("preferred_lang", "zh-TW")
                 personal_langs.add(user_input_lang)
 
-        # 講者自己的手機顯示自己話語的 output_lang 翻譯（例：講中文、設定輸出英文）
         speaker = users_map.get(speaker_id)
-        if speaker and speaker.get("output_lang"):
-            personal_langs.add(speaker["output_lang"])
 
         # 主板視圖：講者在設定裡選的「主板顯示語言」(output_lang)，沒設才用房間預設
         board_lang = board_lang_for(speaker, override_map.get(speaker_id), room)
