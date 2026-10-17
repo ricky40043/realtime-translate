@@ -20,7 +20,6 @@
                 type="text"
                 class="form-input"
                 placeholder="請輸入您的名稱"
-                required
               />
             </div>
             
@@ -222,12 +221,19 @@ const testStream = ref<MediaStream | null>(null)
 const testAnalyser = ref<AnalyserNode | null>(null)
 const testAnimationFrame = ref<number | null>(null)
 
-// 監聽props變化，更新本地設定
+// 監聽props變化，更新本地設定（deep：父層是直接改物件屬性，例如登入後才補上名稱）
 watch(() => props.initialSettings, (newSettings) => {
   if (newSettings) {
     Object.assign(localSettings, { ...defaultSettings, ...newSettings })
   }
-}, { immediate: true })
+}, { immediate: true, deep: true })
+
+// 每次打開都重新帶入目前設定，避免顯示舊值（例如名稱空白導致無法儲存）
+watch(() => props.show, (visible) => {
+  if (visible && props.initialSettings) {
+    Object.assign(localSettings, { ...defaultSettings, ...props.initialSettings })
+  }
+})
 
 onMounted(() => {
   // 如果是首次進入，生成隨機用戶名
@@ -260,6 +266,10 @@ function isSettingsComplete(): boolean {
 }
 
 async function saveSettings() {
+  // 名稱留空不要擋住儲存（使用者多半只是想改語言），自動補一個
+  if (!localSettings.displayName.trim()) {
+    localSettings.displayName = `用戶_${Math.random().toString(36).substr(2, 6)}`
+  }
   if (!isSettingsComplete()) {
     alert('請填寫完整的基本設定')
     return
