@@ -13,41 +13,45 @@ from ..ws.hub import manager
 
 router = APIRouter()
 
-def filter_ai_default_responses(text: str, allow_short: bool = False) -> str:
+# Whisper 在沒人講話時常編出來的字幕（訓練資料是影片字幕）
+_HALLUCINATION_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
+    r"(點贊|点赞).*(訂閱|订阅)|(訂閱|订阅).*(頻道|频道|轉發|转发|打賞|打赏)|明鏡與|明镜与|點點欄目|点点栏目",
+    r"字幕(由|提供|製作|制作|志願|志愿|組|组|by)|中文字幕|字幕君",
+    r"^(作詞|作词|作曲|編曲|编曲|詞曲|词曲|演唱|監製|监制)\s*[:：]?\s*\S{0,8}$",
+    r"(作詞|作词)\s*[:：]?\s*\S+\s+(作曲)",
+    r"感謝(收看|觀看|您的觀看)|感谢(收看|观看|您的观看)|下次再[見见]|歡迎收看|欢迎收看",
+    r"thank(s| you) for watching|please subscribe|like and subscribe|amara\.org|subtitles by",
+    r"ご視聴ありがとうございました|チャンネル登録",
+    r"MBC\s*뉴스|구독.*좋아요|좋아요.*구독|시청해\s*주셔서",
+]]
+# 單獨出現時很可能是幻覺，但真人也可能講；只有在「沒有語音機率」偏高時才丟
+_WEAK_HALLUCINATIONS = {"you", "thank you", "thanks", "bye", "謝謝", "谢谢", "謝謝大家", "谢谢大家", "嗯", "おすすめ"}
+# 同一段話連續重複 3 次以上（Whisper 卡住），只留一次
+_REPEAT = re.compile(r"(.{2,}?)(?:[\s，,、]*\1){2,}")
+
+def filter_ai_default_responses(text: str, allow_short: bool = False, no_speech_prob: float = 0.0) -> str:
     """過濾AI語音辨識模型在無聲音時的預設回應"""
     if not text or not text.strip():
         return ""
-    
-    text_cleaned = text.strip()
-    
-    exact_filter_list = [
-        "請不吝點贊 訂閱 轉發 打賞支持明鏡與點點欄目",
-        "謝謝大家", "明鏡與點點欄目", "歡迎訂閱我的頻道",
-        "请不吝点赞 订阅 转发 打赏支持明镜与点点栏目",
-        "谢谢大家", "明镜与点点栏目", "欢迎订阅我的频道",
-        "感謝收看", "感谢收看", "下次再見", "下次再见"
-    ]
-    
-    for filter_text in exact_filter_list:
-        if text_cleaned == filter_text:
+
+    text_cleaned = _REPEAT.sub(r"\1", text.strip())
+
+    for pattern in _HALLUCINATION_PATTERNS:
+        if pattern.search(text_cleaned):
+            print(f"🔇 [STT] 過濾幻覺字串: {text_cleaned}")
             return ""
-    
-    filter_patterns = [
-        r".*點贊.*訂閱.*轉發.*打賞.*明鏡.*",
-        r".*点赞.*订阅.*转发.*打赏.*明镜.*",
-        r".*支持.*明鏡.*點點.*欄目.*",
-        r".*支持.*明镜.*点点.*栏目.*",
-        r".*字幕.*製作.*", r".*字幕.*制作.*",
-        r"^\.+$", r"^，+$", r"^。+$", r"^\s*$"
-    ]
-    
-    for pattern in filter_patterns:
-        if re.match(pattern, text_cleaned, re.IGNORECASE):
-            return ""
-            
+
+    bare = text_cleaned.strip(" 。.！!？?，,").lower()
+    if bare in _WEAK_HALLUCINATIONS and no_speech_prob > 0.1:
+        print(f"🔇 [STT] 過濾疑似幻覺短句: {text_cleaned} (no_speech={no_speech_prob:.2f})")
+        return ""
+
+    if re.match(r"^[\s.。，,!！?？…]*$", text_cleaned):
+        return ""
+
     if len(text_cleaned) <= 2 and not allow_short:
         return ""
-        
+
     return text_cleaned
 
 # Whisper 自動偵測回傳的是語言全名（如 "Spanish"），轉成兩碼代碼方便比對
@@ -212,9 +216,6 @@ async def broadcast_speech_translations(
             user = users_map.get(user_id)
             if user:
                 user_input_lang = user.get("input_lang") or user.get("preferred_lang", "zh-TW")
-                # 講者看自己的話：顯示 output_lang 翻譯；聽者看別人的話：顯示自己的慣用語
-                if user_id == speaker_id and user.get("output_lang"):
-                    user_input_lang = user["output_lang"]
                 translated_text = translations.get(user_input_lang, {}).get("text", original_text)
                 personal_message = {
                     "type": "personal.subtitle",
@@ -294,7 +295,8 @@ async def upload_speech(
             speaker_lang = (speaker or {}).get("input_lang") or (speaker or {}).get("preferred_lang")
             detected = base_lang(stt_result.get("language"))
             room_langs = await get_room_spoken_langs(db, room_id, speaker)
-            if speaker_lang and detected and detected not in room_langs:
+            # 幾乎沒有語音時不必重試（重試只會換一種語言編字幕）
+            if speaker_lang and detected and detected not in room_langs and stt_result.get("no_speech_prob", 0.0) < 0.5:
                 print(f"🔁 [STT] 偵測到 {stt_result.get('language')}，不在房間語言 {room_langs} 中，改用講者慣用語 {speaker_lang} 重新辨識")
                 t_retry = time.time()
                 stt_result = await stt_service.transcribe_audio(audio_data, audio.content_type, speaker_lang)
@@ -302,7 +304,8 @@ async def upload_speech(
                 print(f"⏱️ [PERF][STT] 重新辨識耗時: {time.time() - t_retry:.3f} 秒，結果: {stt_result.get('text', '')[:50]}")
 
         continuing = bool(state and state["committed"])
-        transcript = filter_ai_default_responses(stt_result["text"], allow_short=continuing)
+        transcript = filter_ai_default_responses(stt_result["text"], allow_short=continuing,
+                                                 no_speech_prob=stt_result.get("no_speech_prob", 0.0))
         # Whisper 偶爾會把提示（前文）原樣吐回來
         if continuing and transcript and state["committed"].rstrip(_TRAILING_PUNCT).endswith(transcript.rstrip(_TRAILING_PUNCT)):
             transcript = ""

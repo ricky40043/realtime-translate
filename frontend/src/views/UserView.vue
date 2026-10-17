@@ -329,8 +329,7 @@ function handleWebSocketMessage(message: any) {
     case 'personal.subtitle':
       console.log('👤 個人字幕:', message.text, `(${message.speakerName})`, `[${message.sourceLang}→${message.targetLang}]`)
       // 個人字幕：使用我的慣用語顯示
-      // 別人的話翻成慣用語，自己的話翻成輸出語言（後端只會送一則給我）
-      if (message.targetLang === inputLang.value || message.targetLang === outputLang.value) {
+      if (message.targetLang === inputLang.value) {
         sessionStore.addPersonalSubtitle({
           id: message.messageId,
           speakerId: message.speakerId || '',
