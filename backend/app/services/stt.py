@@ -22,8 +22,9 @@ class STTService:
         self.use_mock = self._should_use_mock()
     
     async def transcribe_audio(self, audio_data: bytes, content_type: str = "audio/webm", 
-                             language_code: str = "zh-TW", prompt: Optional[str] = None) -> Dict:
-        """轉錄音頻為文字"""
+                             language_code: str = "zh-TW", prompt: Optional[str] = None,
+                             model: Optional[str] = None) -> Dict:
+        """轉錄音頻為文字（model 只有 Groq 會用到）"""
         if self.use_mock:
             return await self._mock_transcribe(audio_data, language_code)
         
@@ -32,7 +33,7 @@ class STTService:
         try:
             if self.provider == "groq":
                 from .groq_stt import groq_stt_service
-                return await groq_stt_service.transcribe_audio(audio_data, content_type, language_code, prompt)
+                return await groq_stt_service.transcribe_audio(audio_data, content_type, language_code, prompt, model)
             elif self.provider == "free":
                 from .free_stt import free_speech_service
                 return await free_speech_service.transcribe_audio(audio_data, content_type, language_code)

@@ -13,6 +13,8 @@ from typing import Dict, List, Optional
 print("✅ 翻譯：Groq LLM 為主，Google Translate JSON 端點為備援（async httpx）")
 
 GROQ_TRANSLATE_MODEL = os.getenv("GROQ_TRANSLATE_MODEL", "openai/gpt-oss-120b")
+# 講話中的即時預覽用較快的小模型，額度也與正式翻譯分開
+GROQ_FAST_TRANSLATE_MODEL = os.getenv("GROQ_FAST_TRANSLATE_MODEL", "openai/gpt-oss-20b")
 
 # 給 LLM 的目標語言名稱（明確指定繁/簡，避免模型自行判斷）
 _TARGET_NAMES = {
@@ -69,7 +71,8 @@ class FreeTranslateService:
         self,
         text: str,
         target_lang: str,
-        source_lang: Optional[str] = None
+        source_lang: Optional[str] = None,
+        fast: bool = False
     ) -> Dict:
         start = time.time()
         # STT providers sometimes return broad names or wrong language labels.
@@ -80,7 +83,10 @@ class FreeTranslateService:
         errors = []
         for provider in (self._groq_translate, self._google_translate):
             try:
-                translated, provider_name = await provider(text, tgt)
+                translated, provider_name = await (
+                    provider(text, tgt, GROQ_FAST_TRANSLATE_MODEL if fast else GROQ_TRANSLATE_MODEL)
+                    if provider == self._groq_translate else provider(text, tgt)
+                )
                 latency_ms = int((time.time() - start) * 1000)
                 print(f"   [Translate] {provider_name} {src}->{tgt} 耗時: {latency_ms}ms")
                 return {
@@ -106,7 +112,7 @@ class FreeTranslateService:
             'error': '; '.join(errors),
         }
 
-    async def _groq_translate(self, text: str, tgt: str):
+    async def _groq_translate(self, text: str, tgt: str, model: str = GROQ_TRANSLATE_MODEL):
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             raise RuntimeError("GROQ_API_KEY 未設定")
@@ -116,7 +122,7 @@ class FreeTranslateService:
             'https://api.groq.com/openai/v1/chat/completions',
             headers={'Authorization': f'Bearer {api_key}'},
             json={
-                'model': GROQ_TRANSLATE_MODEL,
+                'model': model,
                 'temperature': 0,
                 'reasoning_effort': 'low',
                 'messages': [
@@ -138,7 +144,7 @@ class FreeTranslateService:
         translated = (resp.json()['choices'][0]['message']['content'] or '').strip()
         if not translated:
             raise RuntimeError("Groq 回傳空白翻譯")
-        return translated, f'groq:{GROQ_TRANSLATE_MODEL}'
+        return translated, f'groq:{model}'
 
     async def _google_translate(self, text: str, tgt: str):
         client = await _get_client()

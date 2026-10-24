@@ -16,6 +16,7 @@ export interface TranslatorResponse {
   source_lang: string
   target_lang: string
   confidence: number
+  status?: 'ok' | 'empty' | 'other_lang'
 }
 
 /**
@@ -25,12 +26,19 @@ export const speechApi = {
   /**
    * 雙向翻譯機：上傳一次錄音，由後端自動偵測兩種語言中的來源語言。
    */
-  async translate(audioBlob: Blob, langA: string, langB: string): Promise<TranslatorResponse> {
+  async translate(
+    audioBlob: Blob,
+    langA: string,
+    langB: string,
+    options: { isFinal?: boolean } = {}
+  ): Promise<TranslatorResponse> {
     const formData = new FormData()
-    const ext = audioBlob.type.includes('mp4') ? 'm4a' : audioBlob.type.includes('ogg') ? 'ogg' : 'webm'
+    const ext = audioBlob.type.includes('wav') ? 'wav' : audioBlob.type.includes('mp4') ? 'm4a' : audioBlob.type.includes('ogg') ? 'ogg' : 'webm'
     formData.append('audio', audioBlob, `translator.${ext}`)
     formData.append('lang_a', langA)
     formData.append('lang_b', langB)
+    // 講話中的即時預覽 is_final=false；一句講完才送 true
+    formData.append('is_final', String(options.isFinal ?? true))
 
     const response = await fetch(`${API_BASE}/translator/translate`, {
       method: 'POST',
@@ -47,7 +55,7 @@ export const speechApi = {
       } catch {
         if (errorText) message = errorText
       }
-      throw new Error(message)
+      throw Object.assign(new Error(message), { status: response.status })
     }
 
     return response.json()
