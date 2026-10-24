@@ -35,9 +35,7 @@
 
       <button
         class="settings-toggle"
-        :class="{ locked: isRecording }"
         type="button"
-        :disabled="isRecording"
         :aria-expanded="settingsOpen"
         @click="settingsOpen = !settingsOpen"
       >
@@ -48,7 +46,7 @@
       <div class="language-grid">
         <label class="language-field">
           <span>語言 A</span>
-          <select v-model="langA" :disabled="isRecording || isSubmitting">
+          <select v-model="langA" :disabled="isRecording">
             <option v-for="language in languages" :key="language.code" :value="language.code">
               {{ language.name }}
             </option>
@@ -57,7 +55,7 @@
         <div class="swap-icon" aria-hidden="true">↔</div>
         <label class="language-field">
           <span>語言 B</span>
-          <select v-model="langB" :disabled="isRecording || isSubmitting">
+          <select v-model="langB" :disabled="isRecording">
             <option v-for="language in languages" :key="language.code" :value="language.code">
               {{ language.name }}
             </option>
