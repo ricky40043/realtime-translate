@@ -4,8 +4,34 @@
       <header class="page-header">
         <div class="logo" aria-hidden="true">🌍</div>
         <h1>雙向翻譯機</h1>
-        <p>選擇兩種語言，說完一段話後查看翻譯結果</p>
+        <p>選擇兩種語言後，翻譯結果會固定顯示在上方</p>
       </header>
+
+      <section v-if="results.length" class="results" aria-live="polite">
+        <h2>最新翻譯</h2>
+        <article class="result-card latest-result">
+          <div class="result-row">
+            <span class="result-label">原文</span>
+            <p>{{ results[0].value.transcript }}</p>
+          </div>
+          <div class="result-meta">
+            <span>偵測語言：{{ languageName(results[0].value.detected_lang) }}</span>
+            <span>信心度：{{ Math.round(results[0].value.confidence * 100) }}%</span>
+          </div>
+          <div class="result-row translation-row">
+            <span class="result-label">翻譯結果</span>
+            <p>{{ results[0].value.translated_text }}</p>
+          </div>
+          <p class="direction">{{ languageName(results[0].value.source_lang) }} → {{ languageName(results[0].value.target_lang) }}</p>
+        </article>
+        <details v-if="results.length > 1" class="history">
+          <summary>查看先前翻譯（{{ results.length - 1 }}）</summary>
+          <article v-for="item in results.slice(1)" :key="item.id" class="result-card">
+            <div class="result-row"><span class="result-label">原文</span><p>{{ item.value.transcript }}</p></div>
+            <div class="result-row translation-row"><span class="result-label">翻譯結果</span><p>{{ item.value.translated_text }}</p></div>
+          </article>
+        </details>
+      </section>
 
       <button class="settings-toggle" type="button" @click="settingsOpen = !settingsOpen">
         <span>翻譯設定</span><span aria-hidden="true">{{ settingsOpen ? '⌃' : '⌄' }}</span>
@@ -52,27 +78,6 @@
       </button>
       <p class="record-hint">{{ isRecording ? '再次按下按鈕即可送出這段錄音' : '請在安靜環境中清楚說話' }}</p>
 
-      <p v-if="errorMessage" class="status error" role="alert">{{ errorMessage }}</p>
-      <p v-else-if="permissionMessage" class="status error" role="alert">{{ permissionMessage }}</p>
-
-      <section v-if="results.length" class="results" aria-live="polite">
-        <h2>翻譯結果</h2>
-        <article v-for="item in results" :key="item.id" class="result-card">
-        <div class="result-row">
-          <span class="result-label">原文</span>
-          <p>{{ item.value.transcript }}</p>
-        </div>
-        <div class="result-meta">
-          <span>偵測語言：{{ languageName(item.value.detected_lang) }}</span>
-          <span>信心度：{{ Math.round(item.value.confidence * 100) }}%</span>
-        </div>
-        <div class="result-row translation-row">
-          <span class="result-label">翻譯結果</span>
-          <p>{{ item.value.translated_text }}</p>
-        </div>
-        <p class="direction">{{ languageName(item.value.source_lang) }} → {{ languageName(item.value.target_lang) }}</p>
-        </article>
-      </section>
     </section>
   </main>
 </template>
@@ -119,6 +124,9 @@ const mediaRecorder = ref<MediaRecorder | null>(null)
 let mediaStream: MediaStream | null = null
 let uploadChain: Promise<void> = Promise.resolve()
 let resultId = 0
+let segmentChunks: Blob[] = []
+let segmentTimer: number | null = null
+let stoppingForSegment = false
 
 const sameLanguage = computed(() => langA.value === langB.value)
 
@@ -148,10 +156,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
-    mediaRecorder.value.stop()
-  }
-  stopMediaStream()
+  if (isRecording.value) stopRecording()
+  else stopMediaStream()
 })
 
 async function toggleRecording() {
@@ -176,19 +182,10 @@ async function startRecording() {
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
     const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
       .find(type => MediaRecorder.isTypeSupported(type))
-    mediaRecorder.value = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream)
-    mediaRecorder.value.ondataavailable = event => {
-      if (event.data.size > 0 && isRecording.value) {
-        uploadChain = uploadChain.then(() => submitRecording(event.data)).catch(() => undefined)
-      }
-    }
-    mediaRecorder.value.onstop = () => {
-      stopMediaStream()
-      isRecording.value = false
-    }
-    mediaRecorder.value.start(3000)
     isRecording.value = true
     settingsOpen.value = false
+    startSegmentRecorder(mimeType)
+    segmentTimer = window.setInterval(() => rotateSegment(mimeType), 3000)
   } catch (error) {
     stopMediaStream()
     permissionMessage.value = error instanceof DOMException && error.name === 'NotAllowedError'
@@ -197,9 +194,48 @@ async function startRecording() {
   }
 }
 
+function startSegmentRecorder(mimeType?: string) {
+  if (!mediaStream) return
+  const recorder = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream)
+  segmentChunks = []
+  recorder.ondataavailable = event => {
+    if (event.data.size > 0) segmentChunks.push(event.data)
+  }
+  recorder.onstop = () => {
+    const blob = new Blob(segmentChunks, { type: recorder.mimeType || 'audio/webm' })
+    segmentChunks = []
+    if (blob.size > 0) {
+      uploadChain = uploadChain.then(() => submitRecording(blob)).catch(() => undefined)
+    }
+    if (stoppingForSegment) {
+      stoppingForSegment = false
+      isRecording.value = false
+      stopMediaStream()
+    } else if (isRecording.value) {
+      startSegmentRecorder(mimeType)
+    }
+  }
+  recorder.start()
+  mediaRecorder.value = recorder
+}
+
+function rotateSegment(mimeType?: string) {
+  if (!isRecording.value || !mediaRecorder.value || mediaRecorder.value.state === 'inactive') return
+  stoppingForSegment = false
+  mediaRecorder.value.stop()
+}
+
 function stopRecording() {
+  if (segmentTimer !== null) {
+    window.clearInterval(segmentTimer)
+    segmentTimer = null
+  }
   if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
+    stoppingForSegment = true
     mediaRecorder.value.stop()
+  } else {
+    isRecording.value = false
+    stopMediaStream()
   }
 }
 
@@ -214,7 +250,7 @@ async function submitRecording(audioBlob: Blob) {
   errorMessage.value = ''
   try {
     const translated = await speechApi.translate(audioBlob, langA.value, langB.value)
-    results.value.push({ id: ++resultId, value: translated })
+    results.value.unshift({ id: ++resultId, value: translated })
     if (results.value.length > 50) results.value.shift()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '翻譯失敗，請稍後再試。'
