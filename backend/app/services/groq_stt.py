@@ -8,7 +8,7 @@ import time
 import asyncio
 from typing import Dict, Optional
 import tempfile
-from groq import Groq
+from groq import Groq, RateLimitError
 
 # 實測：靜音約 0.7、正常說話約 0.02
 NO_SPEECH_THRESHOLD = 0.5
@@ -28,8 +28,9 @@ class GroqSTTService:
                 self.use_mock = True
     
     async def transcribe_audio(self, audio_data: bytes, content_type: str = "audio/webm", 
-                             language_code: str = "zh-TW", prompt: Optional[str] = None) -> Dict:
-        """使用 Groq API 進行語音轉文字"""
+                             language_code: str = "zh-TW", prompt: Optional[str] = None,
+                             model: Optional[str] = None) -> Dict:
+        """使用 Groq API 進行語音轉文字；model 可指定較快的 whisper-large-v3-turbo（額度與 large-v3 分開算）"""
         if self.use_mock:
             return await self._mock_transcribe(audio_data, language_code)
         
@@ -51,7 +52,7 @@ class GroqSTTService:
                 result = await loop.run_in_executor(
                     None, 
                     self._groq_transcribe_sync,
-                    temp_file_path, language_code, prompt
+                    temp_file_path, language_code, prompt, model
                 )
                 
                 latency_ms = int((time.time() - start_time) * 1000)
@@ -61,6 +62,7 @@ class GroqSTTService:
                     "confidence": result.get("confidence", 0.9),
                     "language": result.get("language", language_code),
                     "no_speech_prob": result.get("no_speech_prob", 0.0),
+                    "rate_limited": result.get("rate_limited", False),
                     "latency_ms": latency_ms,
                     "provider": "groq"
                 }
@@ -77,7 +79,8 @@ class GroqSTTService:
             # 回退到模擬轉錄
             return await self._mock_transcribe(audio_data, language_code)
     
-    def _groq_transcribe_sync(self, audio_file_path: str, language_code: str, prompt: Optional[str] = None) -> Dict:
+    def _groq_transcribe_sync(self, audio_file_path: str, language_code: str, prompt: Optional[str] = None,
+                              model: Optional[str] = None) -> Dict:
         """同步執行 Groq STT API 調用"""
         try:
             # 開啟音頻檔案
@@ -85,7 +88,7 @@ class GroqSTTService:
                 converted_lang = self._convert_lang_code(language_code)
                 kwargs = {
                     "file": file,
-                    "model": "whisper-large-v3",
+                    "model": model or "whisper-large-v3",
                     "response_format": "verbose_json",
                     "temperature": 0.0
                 }
@@ -95,7 +98,9 @@ class GroqSTTService:
                     # 前一段的文字當上下文，讓被切開的句子接得順
                     kwargs["prompt"] = prompt
                 # 不傳 language 時 Whisper 自動偵測
-                transcription = self.client.audio.transcriptions.create(**kwargs)
+                # 指定 model 的是講話中的即時預覽：被限速就直接放棄，不要卡在 SDK 的自動重試
+                client = self.client.with_options(max_retries=0) if model else self.client
+                transcription = client.audio.transcriptions.create(**kwargs)
                 
                 # 解析回應
                 text = transcription.text
@@ -123,6 +128,9 @@ class GroqSTTService:
                     "no_speech_prob": no_speech
                 }
                 
+        except RateLimitError as e:
+            print(f"⏳ Groq 轉錄超過速率限制: {e}")
+            return {"text": "", "confidence": 0.0, "language": language_code, "rate_limited": True}
         except Exception as e:
             print(f"❌ Groq 同步轉錄錯誤: {e}")
             # 失敗就回空字串（會被過濾掉），不要編造假文字
@@ -160,7 +168,7 @@ class GroqSTTService:
             "yue": "yue"
         }
         
-        return lang_mapping.get(lang_code, "en")
+        return lang_mapping.get(lang_code, lang_code.split("-")[0].lower())
     
     def _get_file_suffix(self, content_type: str) -> str:
         """根據內容類型獲取檔案後綴"""
