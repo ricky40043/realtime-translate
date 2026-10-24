@@ -46,6 +46,7 @@
     <footer class="controls">
       <p v-if="errorMessage" class="status error">{{ errorMessage }}</p>
       <p v-if="permissionMessage" class="status error">{{ permissionMessage }}</p>
+      <p v-if="noticeMessage && !isRecording" class="status notice">{{ noticeMessage }}</p>
       <div v-if="isRecording" class="listen-status">
         <div class="level-bar"><div class="level-fill" :class="{ speaking }" :style="{ width: `${Math.round(level * 100)}%` }"></div></div>
         <span>{{ speaking ? '偵測到說話' : '聆聽中' }}{{ slowMode ? '（額度有限，預覽放慢）' : '' }}</span>
@@ -111,6 +112,7 @@ const CALIBRATE_SEC = 0.5      // 剛開始先聽一下背景
 const STUCK_SPEECH_SEC = 15    // 「一直在講」太久，多半是背景變大聲了，背景重新算
 const MIN_INTERVAL = 1.0       // 講話中多久更新一次預覽（秒），被限速時自動放慢
 const MAX_INTERVAL = 4.0
+const AUTO_STOP_SEC = 10       // 這麼久沒有翻出任何東西（沒人講話或只有背景聲）就自動停止，避免一直耗用額度
 
 interface Piece {
   id: number
@@ -140,6 +142,7 @@ const level = ref(0)
 const slowMode = ref(false)
 const errorMessage = ref('')
 const permissionMessage = ref('')
+const noticeMessage = ref('')
 const entries = ref<Entry[]>([])
 const conversationEl = ref<HTMLElement | null>(null)
 
@@ -166,6 +169,8 @@ let interimInFlight = false
 let interimSeq = 0
 let nextId = 0
 let followBottom = true
+let lastActivityAt = 0         // 開始錄音或最後一次翻出內容的時間
+let pendingFinals = 0
 
 const sameLanguage = computed(() => langA.value === langB.value)
 const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(e)))
@@ -211,6 +216,7 @@ async function toggleRecording() {
 async function startRecording() {
   errorMessage.value = ''
   permissionMessage.value = ''
+  noticeMessage.value = ''
   const Ctx = window.AudioContext || (window as any).webkitAudioContext
   if (!navigator.mediaDevices?.getUserMedia || !Ctx) {
     permissionMessage.value = '此瀏覽器不支援錄音功能，請改用最新版 Chrome、Safari 或 Edge。'
@@ -241,6 +247,7 @@ async function startRecording() {
     interimInterval = MIN_INTERVAL
     slowMode.value = false
     isRecording.value = true
+    lastActivityAt = performance.now() / 1000
     settingsOpen.value = false
     requestWakeLock()
   } catch (error) {
@@ -283,6 +290,11 @@ async function requestWakeLock() {
 
 function onAudioBlock(event: AudioProcessingEvent) {
   if (!isRecording.value) return
+  if (performance.now() / 1000 - lastActivityAt > AUTO_STOP_SEC && pendingFinals === 0 && !interimInFlight) {
+    stopRecording()
+    noticeMessage.value = `${AUTO_STOP_SEC} 秒沒有聲音，已自動停止。按「開始翻譯」繼續。`
+    return
+  }
   const data = new Float32Array(event.inputBuffer.getChannelData(0))
   let sum = 0
   for (let i = 0; i < data.length; i++) sum += data[i] * data[i]
@@ -404,6 +416,7 @@ function maybeSendInterim() {
       slowMode.value = interimInterval > 2
       if (target.final || seq < target.interimSeq || result.status !== 'ok' || !result.transcript) return
       target.interimSeq = seq
+      lastActivityAt = performance.now() / 1000
       target.transcript = result.transcript
       target.translation = result.translated_text
       placePiece(owner, target, result)
@@ -437,7 +450,8 @@ function sendFinal(n: number, endsEntry: boolean) {
     voicedSec = rest.filter(b => b.voiced).length * blockSec
   }
 
-  submitFinal(wav, levels, owner, target, 0)
+  pendingFinals++
+  submitFinal(wav, levels, owner, target, 0).finally(() => { pendingFinals-- })
 }
 
 async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Piece, attempt: number): Promise<void> {
@@ -446,6 +460,7 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     const result = await speechApi.translate(wav, langA.value, langB.value, { isFinal: true })
     target.final = true
     if (result.status === 'ok' && result.transcript) {
+      lastActivityAt = performance.now() / 1000
       target.transcript = result.transcript
       target.translation = result.translated_text
       owner = placePiece(owner, target, result)
@@ -462,8 +477,8 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     scrollToBottom()
   } catch (error: any) {
     if (error?.status === 429 && attempt < 4) {
-      setTimeout(() => submitFinal(wav, levels, owner, target, attempt + 1), 1500 * (attempt + 1))
-      return
+      await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)))
+      return submitFinal(wav, levels, owner, target, attempt + 1)
     }
     target.final = true
     pruneEntry(ownerOf(target, owner))
@@ -639,6 +654,7 @@ select { width: 100%; min-height: 44px; padding: .55rem .7rem; border: 1px solid
 .record-icon { margin-right: .5rem; }
 .status { margin: 0 0 .55rem; padding: .6rem .8rem; border-radius: 10px; text-align: center; font-size: .9rem; }
 .status.error { background: rgba(244,63,94,.16); color: #fecdd3; }
+.status.notice { background: rgba(196,181,253,.14); color: #ddd6fe; }
 
 @media (max-width: 480px) {
   .settings-panel { grid-template-columns: 1fr; }
