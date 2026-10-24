@@ -3,7 +3,7 @@
     <header class="top-bar">
       <h1>雙向翻譯機</h1>
       <div class="top-right">
-      <p v-if="quota" class="quota" title="Groq 今天剩餘可呼叫次數，每分鐘更新">
+      <p v-if="quota" class="quota" title="Groq 剩餘可呼叫次數，每次翻譯後更新">
         語音剩 {{ quotaText(quota.speech) }} · 翻譯剩 {{ quotaText(quota.translate) }}
       </p>
       <button class="pair-chip" type="button" :disabled="sameLanguage" @click="settingsOpen = !settingsOpen">
@@ -225,6 +225,11 @@ async function refreshQuota() {
   try { quota.value = await speechApi.quota() } catch { /* 查不到就維持上一次的數字 */ }
 }
 
+// 每次翻譯的回應都帶著最新剩餘次數，直接更新；沒在講話時靠每分鐘查一次
+function applyQuota(result: TranslatorResponse) {
+  if (result.quota?.speech || result.quota?.translate) quota.value = result.quota
+}
+
 function quotaText(info: QuotaInfo | null): string {
   return info ? info.remaining.toLocaleString() : '—'
 }
@@ -439,6 +444,7 @@ function maybeSendInterim() {
   requestCount++
   speechApi.translate(wav, langA.value, langB.value, { isFinal: false })
     .then(result => {
+      applyQuota(result)
       interimInterval = Math.max(MIN_INTERVAL, interimInterval * 0.9)
       slowMode.value = interimInterval > 2
       if (target.final || seq < target.interimSeq || result.status !== 'ok' || !result.transcript) return
@@ -487,6 +493,7 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     requestCount++
     const result = await speechApi.translate(wav, langA.value, langB.value, { isFinal: true })
     target.final = true
+    applyQuota(result)
     if (result.status === 'ok' && result.transcript) {
       lastActivityAt = performance.now() / 1000
       target.transcript = result.transcript

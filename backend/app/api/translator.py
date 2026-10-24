@@ -34,6 +34,8 @@ class TranslatorResponse(BaseModel):
     confidence: float
     # ok：有翻譯；empty：沒人講話或被當成雜訊；other_lang：講的不是選的兩種語言（旁邊的人）
     status: str = "ok"
+    # Groq 剩餘次數（從這次呼叫的回應標頭記下來的，不另外打 API），畫面右上角跟著更新
+    quota: Optional[dict] = None
 
 
 # These are the language families the two-way mode can match reliably.  The
@@ -112,6 +114,12 @@ async def translate_audio(
     is_final: bool = Form(True),
     current_user: str = Depends(get_current_user),
 ):
+    response = await _translate_audio(audio, lang_a, lang_b, is_final, current_user)
+    response.quota = groq_quota.cached()
+    return response
+
+
+async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final: bool, current_user: str) -> TranslatorResponse:
     """Transcribe one recording and translate it between the two selected languages.
 
     is_final=False 是講話中的即時預覽：用較快的模型，結果之後會被定稿取代。

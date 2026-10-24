@@ -66,6 +66,11 @@ async def _probe(model: str) -> None:
     record(model, resp.headers)
 
 
+def cached() -> Dict[str, Optional[Dict]]:
+    """只回傳已記下的數字，不打 API（每次翻譯回應都附上）"""
+    return {"speech": _quota.get(SPEECH_MODEL), "translate": _quota.get(TRANSLATE_MODEL)}
+
+
 async def snapshot() -> Dict[str, Optional[Dict]]:
     async with _probe_lock:
         for model in (SPEECH_MODEL, TRANSLATE_MODEL):
