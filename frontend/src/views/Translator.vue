@@ -55,6 +55,7 @@
       <div v-if="isRecording" class="listen-status">
         <div class="level-bar"><div class="level-fill" :class="{ speaking }" :style="{ width: `${Math.round(level * 100)}%` }"></div></div>
         <span>{{ speaking ? '偵測到說話' : '聆聽中' }}{{ slowMode ? '（額度有限，預覽放慢）' : '' }}</span>
+        <span v-if="debug" class="debug">{{ debugText }}</span>
       </div>
       <button
         class="record-button"
@@ -115,6 +116,8 @@ const START_MARGIN_DB = 12
 const KEEP_MARGIN_DB = 6
 const CALIBRATE_SEC = 0.5      // 剛開始先聽一下背景
 const STUCK_SPEECH_SEC = 15    // 「一直在講」太久，多半是背景變大聲了，背景重新算
+// iPhone 開了降噪後收音很小聲（講話常只有 -50 dB 上下），絕對門檻放低，主要靠「比背景大多少」判斷
+const MIN_DB = -72
 const MIN_INTERVAL = 1.0       // 講話中多久更新一次預覽（秒），被限速時自動放慢
 const MAX_INTERVAL = 4.0
 const AUTO_STOP_SEC = 10       // 這麼久沒有翻出任何東西（沒人講話或只有背景聲）就自動停止，避免一直耗用額度
@@ -145,6 +148,10 @@ const isRecording = ref(false)
 const speaking = ref(false)
 const level = ref(0)
 const slowMode = ref(false)
+// 網址加 ?debug=1 顯示音量數字，現場調整用
+const debug = new URLSearchParams(location.search).has('debug')
+const debugText = ref('')
+let requestCount = 0
 const errorMessage = ref('')
 const permissionMessage = ref('')
 const noticeMessage = ref('')
@@ -323,7 +330,7 @@ function onAudioBlock(event: AudioProcessingEvent) {
   const sorted = [...levelHistory].sort((a, b) => a - b)
   const floor = sorted[Math.floor(sorted.length * 0.5)]
   const calibrated = levelHistory.length * blockSec >= CALIBRATE_SEC
-  const voicedRaw = calibrated && db > floor + (inSpeech ? KEEP_MARGIN_DB : START_MARGIN_DB) && db > -55
+  const voicedRaw = calibrated && db > floor + (inSpeech ? KEEP_MARGIN_DB : START_MARGIN_DB) && db > MIN_DB
   recentVoiced.push(voicedRaw)
   if (recentVoiced.length > 3) recentVoiced.shift()
   const voiced = recentVoiced.filter(Boolean).length >= 2
@@ -332,6 +339,7 @@ function onAudioBlock(event: AudioProcessingEvent) {
 
   speaking.value = inSpeech
   level.value = Math.max(0, Math.min(1, (db - floor) / 30))
+  if (debug) debugText.value = `${Math.round(db)}dB 背景${Math.round(floor ?? 0)} 已送${requestCount}`
 
   blocks.push({ data, db, voiced })
   if (voiced) {
@@ -428,6 +436,7 @@ function maybeSendInterim() {
   const owner = entry
   const seq = ++interimSeq
   const wav = encodeWav(blocks)
+  requestCount++
   speechApi.translate(wav, langA.value, langB.value, { isFinal: false })
     .then(result => {
       interimInterval = Math.max(MIN_INTERVAL, interimInterval * 0.9)
@@ -475,6 +484,7 @@ function sendFinal(n: number, endsEntry: boolean) {
 async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Piece, attempt: number): Promise<void> {
   try {
     // 不把前一段文字當提示給 Whisper：換人講另一種語言時，提示會把新的話硬轉成前一種語言
+    requestCount++
     const result = await speechApi.translate(wav, langA.value, langB.value, { isFinal: true })
     target.final = true
     if (result.status === 'ok' && result.transcript) {
@@ -588,6 +598,11 @@ function encodeWav(segment: Block[]): Blob {
     input.set(b.data, offset)
     offset += b.data.length
   }
+  // 收音太小聲時先放大（最多 20 倍），Whisper 對小聲的話容易聽錯語言
+  let peak = 0
+  for (let i = 0; i < total; i++) peak = Math.max(peak, Math.abs(input[i]))
+  const gain = peak > 0 ? Math.min(20, 0.9 / peak) : 1
+  if (gain > 1) for (let i = 0; i < total; i++) input[i] *= gain
   const ratio = inputRate / TARGET_SAMPLE_RATE
   const outLength = Math.floor(total / ratio)
   const view = new DataView(new ArrayBuffer(44 + outLength * 2))
@@ -665,6 +680,7 @@ select { width: 100%; min-height: 44px; padding: .55rem .7rem; border: 1px solid
 
 .controls { padding: .6rem 0 calc(.8rem + env(safe-area-inset-bottom, 0px)); border-top: 1px solid rgba(255,255,255,.1); }
 .listen-status { display: flex; align-items: center; gap: .6rem; margin-bottom: .55rem; color: rgba(255,255,255,.62); font-size: .8rem; }
+.debug { font-size: .7rem; opacity: .7; margin-left: auto; font-variant-numeric: tabular-nums; }
 .level-bar { flex: 0 0 72px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
 .level-fill { height: 100%; background: rgba(255,255,255,.4); transition: width .08s; }
 .level-fill.speaking { background: #4ade80; }
