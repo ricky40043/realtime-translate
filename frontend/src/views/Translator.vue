@@ -2,10 +2,15 @@
   <main class="translator-page">
     <header class="top-bar">
       <h1>雙向翻譯機</h1>
+      <div class="top-right">
+      <p v-if="quota" class="quota" title="Groq 今天剩餘可呼叫次數，每分鐘更新">
+        語音剩 {{ quotaText(quota.speech) }} · 翻譯剩 {{ quotaText(quota.translate) }}
+      </p>
       <button class="pair-chip" type="button" :disabled="sameLanguage" @click="settingsOpen = !settingsOpen">
         {{ languageName(langA) }} ⇄ {{ languageName(langB) }}
         <span aria-hidden="true">{{ settingsOpen ? '⌃' : '⌄' }}</span>
       </button>
+      </div>
     </header>
 
     <div v-if="settingsOpen" class="settings-panel">
@@ -46,9 +51,11 @@
     <footer class="controls">
       <p v-if="errorMessage" class="status error">{{ errorMessage }}</p>
       <p v-if="permissionMessage" class="status error">{{ permissionMessage }}</p>
+      <p v-if="noticeMessage && !isRecording" class="status notice">{{ noticeMessage }}</p>
       <div v-if="isRecording" class="listen-status">
         <div class="level-bar"><div class="level-fill" :class="{ speaking }" :style="{ width: `${Math.round(level * 100)}%` }"></div></div>
         <span>{{ speaking ? '偵測到說話' : '聆聽中' }}{{ slowMode ? '（額度有限，預覽放慢）' : '' }}</span>
+        <span v-if="debug" class="debug">{{ debugText }}</span>
       </div>
       <button
         class="record-button"
@@ -69,7 +76,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { authApi } from '../api/http'
-import { speechApi, type TranslatorResponse } from '../api/speech'
+import { speechApi, type QuotaInfo, type TranslatorResponse } from '../api/speech'
 import { useSessionStore } from '../stores/session'
 
 const languages = [
@@ -109,8 +116,11 @@ const START_MARGIN_DB = 12
 const KEEP_MARGIN_DB = 6
 const CALIBRATE_SEC = 0.5      // 剛開始先聽一下背景
 const STUCK_SPEECH_SEC = 15    // 「一直在講」太久，多半是背景變大聲了，背景重新算
+// iPhone 開了降噪後收音很小聲（講話常只有 -50 dB 上下），絕對門檻放低，主要靠「比背景大多少」判斷
+const MIN_DB = -72
 const MIN_INTERVAL = 1.0       // 講話中多久更新一次預覽（秒），被限速時自動放慢
 const MAX_INTERVAL = 4.0
+const AUTO_STOP_SEC = 10       // 這麼久沒有翻出任何東西（沒人講話或只有背景聲）就自動停止，避免一直耗用額度
 
 interface Piece {
   id: number
@@ -138,8 +148,15 @@ const isRecording = ref(false)
 const speaking = ref(false)
 const level = ref(0)
 const slowMode = ref(false)
+// 網址加 ?debug=1 顯示音量數字，現場調整用
+const debug = new URLSearchParams(location.search).has('debug')
+const debugText = ref('')
+let requestCount = 0
 const errorMessage = ref('')
 const permissionMessage = ref('')
+const noticeMessage = ref('')
+const quota = ref<{ speech: QuotaInfo | null; translate: QuotaInfo | null } | null>(null)
+let quotaTimer: number | null = null
 const entries = ref<Entry[]>([])
 const conversationEl = ref<HTMLElement | null>(null)
 
@@ -166,6 +183,8 @@ let interimInFlight = false
 let interimSeq = 0
 let nextId = 0
 let followBottom = true
+let lastActivityAt = 0         // 開始錄音或最後一次翻出內容的時間
+let pendingFinals = 0
 
 const sameLanguage = computed(() => langA.value === langB.value)
 const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(e)))
@@ -193,11 +212,22 @@ onMounted(async () => {
     }
   }
   authReady.value = true
+  refreshQuota()
+  quotaTimer = window.setInterval(refreshQuota, 60_000)
 })
 
 onBeforeUnmount(() => {
   stopRecording()
+  if (quotaTimer !== null) window.clearInterval(quotaTimer)
 })
+
+async function refreshQuota() {
+  try { quota.value = await speechApi.quota() } catch { /* 查不到就維持上一次的數字 */ }
+}
+
+function quotaText(info: QuotaInfo | null): string {
+  return info ? info.remaining.toLocaleString() : '—'
+}
 
 function swapLanguages() {
   ;[langA.value, langB.value] = [langB.value, langA.value]
@@ -211,6 +241,7 @@ async function toggleRecording() {
 async function startRecording() {
   errorMessage.value = ''
   permissionMessage.value = ''
+  noticeMessage.value = ''
   const Ctx = window.AudioContext || (window as any).webkitAudioContext
   if (!navigator.mediaDevices?.getUserMedia || !Ctx) {
     permissionMessage.value = '此瀏覽器不支援錄音功能，請改用最新版 Chrome、Safari 或 Edge。'
@@ -241,6 +272,7 @@ async function startRecording() {
     interimInterval = MIN_INTERVAL
     slowMode.value = false
     isRecording.value = true
+    lastActivityAt = performance.now() / 1000
     settingsOpen.value = false
     requestWakeLock()
   } catch (error) {
@@ -283,6 +315,11 @@ async function requestWakeLock() {
 
 function onAudioBlock(event: AudioProcessingEvent) {
   if (!isRecording.value) return
+  if (performance.now() / 1000 - lastActivityAt > AUTO_STOP_SEC && pendingFinals === 0 && !interimInFlight) {
+    stopRecording()
+    noticeMessage.value = `${AUTO_STOP_SEC} 秒沒有聲音，已自動停止。按「開始翻譯」繼續。`
+    return
+  }
   const data = new Float32Array(event.inputBuffer.getChannelData(0))
   let sum = 0
   for (let i = 0; i < data.length; i++) sum += data[i] * data[i]
@@ -293,7 +330,7 @@ function onAudioBlock(event: AudioProcessingEvent) {
   const sorted = [...levelHistory].sort((a, b) => a - b)
   const floor = sorted[Math.floor(sorted.length * 0.5)]
   const calibrated = levelHistory.length * blockSec >= CALIBRATE_SEC
-  const voicedRaw = calibrated && db > floor + (inSpeech ? KEEP_MARGIN_DB : START_MARGIN_DB) && db > -55
+  const voicedRaw = calibrated && db > floor + (inSpeech ? KEEP_MARGIN_DB : START_MARGIN_DB) && db > MIN_DB
   recentVoiced.push(voicedRaw)
   if (recentVoiced.length > 3) recentVoiced.shift()
   const voiced = recentVoiced.filter(Boolean).length >= 2
@@ -302,6 +339,7 @@ function onAudioBlock(event: AudioProcessingEvent) {
 
   speaking.value = inSpeech
   level.value = Math.max(0, Math.min(1, (db - floor) / 30))
+  if (debug) debugText.value = `${Math.round(db)}dB 背景${Math.round(floor ?? 0)} 已送${requestCount}`
 
   blocks.push({ data, db, voiced })
   if (voiced) {
@@ -398,12 +436,14 @@ function maybeSendInterim() {
   const owner = entry
   const seq = ++interimSeq
   const wav = encodeWav(blocks)
+  requestCount++
   speechApi.translate(wav, langA.value, langB.value, { isFinal: false })
     .then(result => {
       interimInterval = Math.max(MIN_INTERVAL, interimInterval * 0.9)
       slowMode.value = interimInterval > 2
       if (target.final || seq < target.interimSeq || result.status !== 'ok' || !result.transcript) return
       target.interimSeq = seq
+      lastActivityAt = performance.now() / 1000
       target.transcript = result.transcript
       target.translation = result.translated_text
       placePiece(owner, target, result)
@@ -437,15 +477,18 @@ function sendFinal(n: number, endsEntry: boolean) {
     voicedSec = rest.filter(b => b.voiced).length * blockSec
   }
 
-  submitFinal(wav, levels, owner, target, 0)
+  pendingFinals++
+  submitFinal(wav, levels, owner, target, 0).finally(() => { pendingFinals-- })
 }
 
 async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Piece, attempt: number): Promise<void> {
   try {
     // 不把前一段文字當提示給 Whisper：換人講另一種語言時，提示會把新的話硬轉成前一種語言
+    requestCount++
     const result = await speechApi.translate(wav, langA.value, langB.value, { isFinal: true })
     target.final = true
     if (result.status === 'ok' && result.transcript) {
+      lastActivityAt = performance.now() / 1000
       target.transcript = result.transcript
       target.translation = result.translated_text
       owner = placePiece(owner, target, result)
@@ -462,8 +505,8 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     scrollToBottom()
   } catch (error: any) {
     if (error?.status === 429 && attempt < 4) {
-      setTimeout(() => submitFinal(wav, levels, owner, target, attempt + 1), 1500 * (attempt + 1))
-      return
+      await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)))
+      return submitFinal(wav, levels, owner, target, attempt + 1)
     }
     target.final = true
     pruneEntry(ownerOf(target, owner))
@@ -555,6 +598,11 @@ function encodeWav(segment: Block[]): Blob {
     input.set(b.data, offset)
     offset += b.data.length
   }
+  // 收音太小聲時先放大（最多 20 倍），Whisper 對小聲的話容易聽錯語言
+  let peak = 0
+  for (let i = 0; i < total; i++) peak = Math.max(peak, Math.abs(input[i]))
+  const gain = peak > 0 ? Math.min(20, 0.9 / peak) : 1
+  if (gain > 1) for (let i = 0; i < total; i++) input[i] *= gain
   const ratio = inputRate / TARGET_SAMPLE_RATE
   const outLength = Math.floor(total / ratio)
   const view = new DataView(new ArrayBuffer(44 + outLength * 2))
@@ -607,6 +655,8 @@ function languageName(code: string): string {
 
 .top-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding-bottom: .6rem; }
 h1 { margin: 0; font-size: 1.15rem; }
+.top-right { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
+.quota { margin: 0; color: rgba(255,255,255,.5); font-size: .7rem; white-space: nowrap; }
 .pair-chip { display: flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(255,255,255,.08); color: #fff; font-size: .9rem; }
 
 .settings-panel { display: grid; grid-template-columns: 1fr auto 1fr; gap: .6rem; align-items: end; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }
@@ -630,6 +680,7 @@ select { width: 100%; min-height: 44px; padding: .55rem .7rem; border: 1px solid
 
 .controls { padding: .6rem 0 calc(.8rem + env(safe-area-inset-bottom, 0px)); border-top: 1px solid rgba(255,255,255,.1); }
 .listen-status { display: flex; align-items: center; gap: .6rem; margin-bottom: .55rem; color: rgba(255,255,255,.62); font-size: .8rem; }
+.debug { font-size: .7rem; opacity: .7; margin-left: auto; font-variant-numeric: tabular-nums; }
 .level-bar { flex: 0 0 72px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
 .level-fill { height: 100%; background: rgba(255,255,255,.4); transition: width .08s; }
 .level-fill.speaking { background: #4ade80; }
@@ -639,6 +690,7 @@ select { width: 100%; min-height: 44px; padding: .55rem .7rem; border: 1px solid
 .record-icon { margin-right: .5rem; }
 .status { margin: 0 0 .55rem; padding: .6rem .8rem; border-radius: 10px; text-align: center; font-size: .9rem; }
 .status.error { background: rgba(244,63,94,.16); color: #fecdd3; }
+.status.notice { background: rgba(196,181,253,.14); color: #ddd6fe; }
 
 @media (max-width: 480px) {
   .settings-panel { grid-template-columns: 1fr; }

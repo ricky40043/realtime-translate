@@ -9,6 +9,7 @@ import os
 import time
 import httpx
 from typing import Dict, List, Optional
+from . import groq_quota
 
 print("✅ 翻譯：Groq LLM 為主，Google Translate JSON 端點為備援（async httpx）")
 
@@ -140,6 +141,7 @@ class FreeTranslateService:
                 ],
             },
         )
+        groq_quota.record(model, resp.headers)
         resp.raise_for_status()
         translated = (resp.json()['choices'][0]['message']['content'] or '').strip()
         if not translated:

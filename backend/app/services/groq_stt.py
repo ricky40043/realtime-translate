@@ -9,6 +9,7 @@ import asyncio
 from typing import Dict, Optional
 import tempfile
 from groq import Groq, RateLimitError
+from . import groq_quota
 
 # 實測：靜音約 0.7、正常說話約 0.02
 NO_SPEECH_THRESHOLD = 0.5
@@ -100,7 +101,9 @@ class GroqSTTService:
                 # 不傳 language 時 Whisper 自動偵測
                 # 指定 model 的是講話中的即時預覽：被限速就直接放棄，不要卡在 SDK 的自動重試
                 client = self.client.with_options(max_retries=0) if model else self.client
-                transcription = client.audio.transcriptions.create(**kwargs)
+                raw = client.audio.transcriptions.with_raw_response.create(**kwargs)
+                groq_quota.record(kwargs["model"], raw.headers)
+                transcription = raw.parse()
                 
                 # 解析回應
                 text = transcription.text
@@ -129,6 +132,7 @@ class GroqSTTService:
                 }
                 
         except RateLimitError as e:
+            groq_quota.record(model or "whisper-large-v3", e.response.headers)
             print(f"⏳ Groq 轉錄超過速率限制: {e}")
             return {"text": "", "confidence": 0.0, "language": language_code, "rate_limited": True}
         except Exception as e:

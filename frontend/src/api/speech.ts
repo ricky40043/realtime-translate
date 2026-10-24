@@ -19,6 +19,11 @@ export interface TranslatorResponse {
   status?: 'ok' | 'empty' | 'other_lang'
 }
 
+export interface QuotaInfo {
+  remaining: number
+  limit: number
+}
+
 /**
  * 語音相關 API
  */
@@ -58,6 +63,15 @@ export const speechApi = {
       throw Object.assign(new Error(message), { status: response.status })
     }
 
+    return response.json()
+  },
+
+  /**
+   * Groq 今天剩餘的呼叫次數（語音辨識、翻譯）
+   */
+  async quota(): Promise<{ speech: QuotaInfo | null; translate: QuotaInfo | null }> {
+    const response = await fetch(`${API_BASE}/translator/quota`, { headers: getAuthHeaders() })
+    if (!response.ok) throw new Error('quota unavailable')
     return response.json()
   },
 
