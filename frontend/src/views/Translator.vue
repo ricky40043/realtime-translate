@@ -2,10 +2,15 @@
   <main class="translator-page">
     <header class="top-bar">
       <h1>雙向翻譯機</h1>
+      <div class="top-right">
+      <p v-if="quota" class="quota" title="Groq 今天剩餘可呼叫次數，每分鐘更新">
+        語音剩 {{ quotaText(quota.speech) }} · 翻譯剩 {{ quotaText(quota.translate) }}
+      </p>
       <button class="pair-chip" type="button" :disabled="sameLanguage" @click="settingsOpen = !settingsOpen">
         {{ languageName(langA) }} ⇄ {{ languageName(langB) }}
         <span aria-hidden="true">{{ settingsOpen ? '⌃' : '⌄' }}</span>
       </button>
+      </div>
     </header>
 
     <div v-if="settingsOpen" class="settings-panel">
@@ -70,7 +75,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { authApi } from '../api/http'
-import { speechApi, type TranslatorResponse } from '../api/speech'
+import { speechApi, type QuotaInfo, type TranslatorResponse } from '../api/speech'
 import { useSessionStore } from '../stores/session'
 
 const languages = [
@@ -143,6 +148,8 @@ const slowMode = ref(false)
 const errorMessage = ref('')
 const permissionMessage = ref('')
 const noticeMessage = ref('')
+const quota = ref<{ speech: QuotaInfo | null; translate: QuotaInfo | null } | null>(null)
+let quotaTimer: number | null = null
 const entries = ref<Entry[]>([])
 const conversationEl = ref<HTMLElement | null>(null)
 
@@ -198,11 +205,22 @@ onMounted(async () => {
     }
   }
   authReady.value = true
+  refreshQuota()
+  quotaTimer = window.setInterval(refreshQuota, 60_000)
 })
 
 onBeforeUnmount(() => {
   stopRecording()
+  if (quotaTimer !== null) window.clearInterval(quotaTimer)
 })
+
+async function refreshQuota() {
+  try { quota.value = await speechApi.quota() } catch { /* 查不到就維持上一次的數字 */ }
+}
+
+function quotaText(info: QuotaInfo | null): string {
+  return info ? info.remaining.toLocaleString() : '—'
+}
 
 function swapLanguages() {
   ;[langA.value, langB.value] = [langB.value, langA.value]
@@ -622,6 +640,8 @@ function languageName(code: string): string {
 
 .top-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding-bottom: .6rem; }
 h1 { margin: 0; font-size: 1.15rem; }
+.top-right { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
+.quota { margin: 0; color: rgba(255,255,255,.5); font-size: .7rem; white-space: nowrap; }
 .pair-chip { display: flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(255,255,255,.08); color: #fff; font-size: .9rem; }
 
 .settings-panel { display: grid; grid-template-columns: 1fr auto 1fr; gap: .6rem; align-items: end; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from ..deps import get_current_user
 from ..services.stt import stt_service
 from ..services.translate import detect_language, translation_service
+from ..services import groq_quota
 from .speech import filter_ai_default_responses
 from opencc import OpenCC
 
@@ -183,3 +184,10 @@ async def translate_audio(
         target_lang=target_lang,
         confidence=float(stt_result.get("confidence") or 0.0),
     )
+
+
+@router.get("/quota")
+async def get_quota(current_user: str = Depends(get_current_user)):
+    """Groq 今天剩餘的呼叫次數（語音辨識、翻譯），翻譯機右上角顯示用"""
+    _ = current_user
+    return await groq_quota.snapshot()
