@@ -114,8 +114,17 @@ async def translate_audio(
     )
     transcript = (stt_result.get("text") or "").strip()
     if not transcript:
-        detail = stt_result.get("error") or "No speech was detected in the recording"
-        raise HTTPException(status_code=422, detail=detail)
+        # A rolling recorder will regularly produce a segment containing only
+        # silence (for example while the speaker pauses).  That is normal and
+        # must not become a visible error or break the next segment.
+        return TranslatorResponse(
+            transcript="",
+            translated_text="",
+            detected_lang="",
+            source_lang="",
+            target_lang="",
+            confidence=0.0,
+        )
 
     detected_raw = stt_result.get("language") or detect_language(transcript)
     detected_lang = _normalize_lang(detected_raw)

@@ -247,13 +247,20 @@ function stopMediaStream() {
 async function submitRecording(audioBlob: Blob) {
   if (sameLanguage.value) return
   isSubmitting.value = true
-  errorMessage.value = ''
   try {
     const translated = await speechApi.translate(audioBlob, langA.value, langB.value)
+    // Silence-only rolling segments are expected between spoken phrases.
+    // Ignore them completely so the UI stays clean and the next segment keeps
+    // being processed.
+    if (!translated.transcript?.trim() || !translated.translated_text?.trim()) return
     results.value.unshift({ id: ++resultId, value: translated })
     if (results.value.length > 50) results.value.shift()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '翻譯失敗，請稍後再試。'
+    const message = error instanceof Error ? error.message : ''
+    // Older backends may still answer 422 for silence. Treat that response as
+    // an empty segment as well, rather than showing a repeated error.
+    if (/no speech|speech was detected|沒有偵測到語音|沒有語音/i.test(message)) return
+    errorMessage.value = message || '翻譯失敗，請稍後再試。'
   } finally {
     isSubmitting.value = false
   }
