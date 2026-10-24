@@ -24,8 +24,8 @@ body {
 
 #app {
   width: 100%;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow: visible;
 }
 
 /* 全域按鈕樣式 */

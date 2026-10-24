@@ -7,6 +7,11 @@
         <p>選擇兩種語言，說完一段話後查看翻譯結果</p>
       </header>
 
+      <button class="settings-toggle" type="button" @click="settingsOpen = !settingsOpen">
+        <span>翻譯設定</span><span aria-hidden="true">{{ settingsOpen ? '⌃' : '⌄' }}</span>
+      </button>
+
+      <div v-if="settingsOpen" class="settings-panel">
       <div class="language-grid">
         <label class="language-field">
           <span>語言 A</span>
@@ -28,11 +33,14 @@
       </div>
 
       <p v-if="sameLanguage" class="field-error">請選擇兩種不同的語言。</p>
+      </div>
+
+      <p class="live-hint">{{ isRecording ? '正在即時辨識，每 3 秒更新一次翻譯' : '開始後會持續翻譯，按停止即可結束' }}</p>
 
       <button
         class="record-button"
         :class="{ recording: isRecording }"
-        :disabled="!authReady || isSubmitting || sameLanguage"
+        :disabled="!authReady || (!isRecording && isSubmitting) || sameLanguage"
         type="button"
         @click="toggleRecording"
       >
@@ -47,20 +55,23 @@
       <p v-if="errorMessage" class="status error" role="alert">{{ errorMessage }}</p>
       <p v-else-if="permissionMessage" class="status error" role="alert">{{ permissionMessage }}</p>
 
-      <section v-if="result" class="result-card" aria-live="polite">
+      <section v-if="results.length" class="results" aria-live="polite">
+        <h2>翻譯結果</h2>
+        <article v-for="item in results" :key="item.id" class="result-card">
         <div class="result-row">
           <span class="result-label">原文</span>
-          <p>{{ result.transcript }}</p>
+          <p>{{ item.value.transcript }}</p>
         </div>
         <div class="result-meta">
-          <span>偵測語言：{{ languageName(result.detected_lang) }}</span>
-          <span>信心度：{{ Math.round(result.confidence * 100) }}%</span>
+          <span>偵測語言：{{ languageName(item.value.detected_lang) }}</span>
+          <span>信心度：{{ Math.round(item.value.confidence * 100) }}%</span>
         </div>
         <div class="result-row translation-row">
           <span class="result-label">翻譯結果</span>
-          <p>{{ result.translated_text }}</p>
+          <p>{{ item.value.translated_text }}</p>
         </div>
-        <p class="direction">{{ languageName(result.source_lang) }} → {{ languageName(result.target_lang) }}</p>
+        <p class="direction">{{ languageName(item.value.source_lang) }} → {{ languageName(item.value.target_lang) }}</p>
+        </article>
       </section>
     </section>
   </main>
@@ -97,15 +108,17 @@ const languages = [
 const sessionStore = useSessionStore()
 const langA = ref('zh-TW')
 const langB = ref('en')
+const settingsOpen = ref(true)
 const authReady = ref(false)
 const isRecording = ref(false)
 const isSubmitting = ref(false)
 const errorMessage = ref('')
 const permissionMessage = ref('')
-const result = ref<TranslatorResponse | null>(null)
+const results = ref<Array<{ id: number; value: TranslatorResponse }>>([])
 const mediaRecorder = ref<MediaRecorder | null>(null)
 let mediaStream: MediaStream | null = null
-let recordedChunks: Blob[] = []
+let uploadChain: Promise<void> = Promise.resolve()
+let resultId = 0
 
 const sameLanguage = computed(() => langA.value === langB.value)
 
@@ -152,7 +165,7 @@ async function toggleRecording() {
 async function startRecording() {
   errorMessage.value = ''
   permissionMessage.value = ''
-  result.value = null
+  errorMessage.value = ''
 
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     permissionMessage.value = '此瀏覽器不支援錄音功能，請改用最新版 Chrome、Safari 或 Edge。'
@@ -164,19 +177,18 @@ async function startRecording() {
     const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
       .find(type => MediaRecorder.isTypeSupported(type))
     mediaRecorder.value = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream)
-    recordedChunks = []
     mediaRecorder.value.ondataavailable = event => {
-      if (event.data.size > 0) recordedChunks.push(event.data)
+      if (event.data.size > 0 && isRecording.value) {
+        uploadChain = uploadChain.then(() => submitRecording(event.data)).catch(() => undefined)
+      }
     }
     mediaRecorder.value.onstop = () => {
-      const recorder = mediaRecorder.value
-      const blob = new Blob(recordedChunks, { type: recorder?.mimeType || 'audio/webm' })
       stopMediaStream()
       isRecording.value = false
-      if (blob.size > 0) void submitRecording(blob)
     }
-    mediaRecorder.value.start()
+    mediaRecorder.value.start(3000)
     isRecording.value = true
+    settingsOpen.value = false
   } catch (error) {
     stopMediaStream()
     permissionMessage.value = error instanceof DOMException && error.name === 'NotAllowedError'
@@ -201,7 +213,9 @@ async function submitRecording(audioBlob: Blob) {
   isSubmitting.value = true
   errorMessage.value = ''
   try {
-    result.value = await speechApi.translate(audioBlob, langA.value, langB.value)
+    const translated = await speechApi.translate(audioBlob, langA.value, langB.value)
+    results.value.push({ id: ++resultId, value: translated })
+    if (results.value.length > 50) results.value.shift()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '翻譯失敗，請稍後再試。'
   } finally {
@@ -222,7 +236,8 @@ function languageName(code: string): string {
   padding: 1rem;
   display: flex;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start;
+  overflow-y: auto;
   background: linear-gradient(160deg, #0f0c29 0%, #302b63 52%, #24243e 100%);
   color: #fff;
 }
@@ -241,6 +256,9 @@ function languageName(code: string): string {
 .logo { font-size: 3rem; line-height: 1; margin-bottom: .75rem; }
 h1 { margin: 0; font-size: clamp(1.7rem, 7vw, 2.4rem); }
 .page-header p { margin: .6rem 0 1.75rem; color: rgba(255, 255, 255, .68); }
+.settings-toggle { width: 100%; display: flex; justify-content: space-between; padding: .8rem 0; border: 0; border-bottom: 1px solid rgba(255,255,255,.14); background: transparent; color: #fff; font-size: 1rem; font-weight: 700; }
+.settings-panel { padding-top: 1rem; }
+.live-hint { margin: 1rem 0 0; color: rgba(255, 255, 255, .62); text-align: center; font-size: .85rem; }
 
 .language-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: .7rem; align-items: end; }
 .language-field { display: flex; flex-direction: column; gap: .4rem; font-size: .9rem; font-weight: 600; }
@@ -257,6 +275,8 @@ select { width: 100%; min-height: 48px; padding: .7rem .75rem; border: 1px solid
 .status.error { background: rgba(244, 63, 94, .16); color: #fecdd3; }
 
 .result-card { margin-top: 1.25rem; padding: 1.1rem; border-radius: 14px; background: rgba(15, 23, 42, .42); }
+.results { margin-top: 1.4rem; }
+.results h2 { margin: 0; font-size: 1.1rem; }
 .result-row { display: grid; gap: .4rem; }
 .result-row p { margin: 0; font-size: 1.1rem; line-height: 1.6; overflow-wrap: anywhere; }
 .result-label { color: #c4b5fd; font-size: .82rem; font-weight: 700; }
