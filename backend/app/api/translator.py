@@ -33,8 +33,21 @@ _LANGUAGE_ALIASES = {
     "malay": "ms",
     "bahasa melayu": "ms",
     "english": "en",
+    "thai": "th",
+    "vietnamese": "vi",
+    "indonesian": "id",
     "japanese": "ja",
     "korean": "ko",
+    "spanish": "es",
+    "french": "fr",
+    "german": "de",
+    "italian": "it",
+    "portuguese": "pt",
+    "russian": "ru",
+    "arabic": "ar",
+    "hindi": "hi",
+    "dutch": "nl",
+    "turkish": "tr",
 }
 
 
