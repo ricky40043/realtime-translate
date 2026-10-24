@@ -33,7 +33,14 @@
         </details>
       </section>
 
-      <button class="settings-toggle" type="button" @click="settingsOpen = !settingsOpen">
+      <button
+        class="settings-toggle"
+        :class="{ locked: isRecording }"
+        type="button"
+        :disabled="isRecording"
+        :aria-expanded="settingsOpen"
+        @click="settingsOpen = !settingsOpen"
+      >
         <span>翻譯設定</span><span aria-hidden="true">{{ settingsOpen ? '⌃' : '⌄' }}</span>
       </button>
 
@@ -300,6 +307,7 @@ function languageName(code: string): string {
 h1 { margin: 0; font-size: clamp(1.7rem, 7vw, 2.4rem); }
 .page-header p { margin: .6rem 0 1.75rem; color: rgba(255, 255, 255, .68); }
 .settings-toggle { width: 100%; display: flex; justify-content: space-between; padding: .8rem 0; border: 0; border-bottom: 1px solid rgba(255,255,255,.14); background: transparent; color: #fff; font-size: 1rem; font-weight: 700; }
+.settings-toggle.locked { cursor: not-allowed; opacity: .72; }
 .settings-panel { padding-top: 1rem; }
 .live-hint { margin: 1rem 0 0; color: rgba(255, 255, 255, .62); text-align: center; font-size: .85rem; }
 
