@@ -46,7 +46,7 @@
       <div class="language-grid">
         <label class="language-field">
           <span>語言 A</span>
-          <select v-model="langA" :disabled="isRecording">
+          <select v-model="langA">
             <option v-for="language in languages" :key="language.code" :value="language.code">
               {{ language.name }}
             </option>
@@ -55,7 +55,7 @@
         <div class="swap-icon" aria-hidden="true">↔</div>
         <label class="language-field">
           <span>語言 B</span>
-          <select v-model="langB" :disabled="isRecording">
+          <select v-model="langB">
             <option v-for="language in languages" :key="language.code" :value="language.code">
               {{ language.name }}
             </option>
