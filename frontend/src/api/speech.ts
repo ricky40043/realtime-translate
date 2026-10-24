@@ -17,6 +17,7 @@ export interface TranslatorResponse {
   target_lang: string
   confidence: number
   status?: 'ok' | 'empty' | 'other_lang'
+  quota?: { speech: QuotaInfo | null; translate: QuotaInfo | null } | null
 }
 
 export interface QuotaInfo {
