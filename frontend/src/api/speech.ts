@@ -9,10 +9,50 @@ const getAuthHeaders = () => ({
   'Authorization': `Bearer ${getAuthToken()}`
 })
 
+export interface TranslatorResponse {
+  transcript: string
+  translated_text: string
+  detected_lang: string
+  source_lang: string
+  target_lang: string
+  confidence: number
+}
+
 /**
  * 語音相關 API
  */
 export const speechApi = {
+  /**
+   * 雙向翻譯機：上傳一次錄音，由後端自動偵測兩種語言中的來源語言。
+   */
+  async translate(audioBlob: Blob, langA: string, langB: string): Promise<TranslatorResponse> {
+    const formData = new FormData()
+    const ext = audioBlob.type.includes('mp4') ? 'm4a' : audioBlob.type.includes('ogg') ? 'ogg' : 'webm'
+    formData.append('audio', audioBlob, `translator.${ext}`)
+    formData.append('lang_a', langA)
+    formData.append('lang_b', langB)
+
+    const response = await fetch(`${API_BASE}/translator/translate`, {
+      method: 'POST',
+      body: formData,
+      headers: getAuthHeaders()
+    })
+
+    if (!response.ok) {
+      let message = '翻譯失敗，請稍後再試'
+      const errorText = await response.text()
+      try {
+        const error = JSON.parse(errorText)
+        message = error.detail || message
+      } catch {
+        if (errorText) message = errorText
+      }
+      throw new Error(message)
+    }
+
+    return response.json()
+  },
+
   /**
    * 上傳語音文件進行處理
    */

@@ -9,12 +9,14 @@ import Room from './views/Room.vue'
 import Settings from './views/Settings.vue'
 import HostBoard from './views/HostBoard.vue'
 import UserView from './views/UserView.vue'
+import Translator from './views/Translator.vue'
 
 // 建立路由
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/room' },
+    { path: '/', redirect: '/translator' },
+    { path: '/translator', component: Translator, name: 'translator' },
     { path: '/room/:roomId?', component: Room, name: 'room' },
     { path: '/host/:roomId', component: HostBoard, name: 'host' },
     { path: '/user', component: UserView, name: 'user' },

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-from .api import auth, rooms, ingest, speech, speech_staged
+from .api import auth, rooms, ingest, speech, speech_staged, translator
 from .ws.hub import manager
 from .db.pool import init_db
 
@@ -37,6 +37,7 @@ app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
 app.include_router(speech.router, prefix="/api/speech", tags=["speech"])
 app.include_router(speech_staged.router, prefix="/api/speech-staged", tags=["speech-staged"])
+app.include_router(translator.router, prefix="/api/translator", tags=["translator"])
 
 @app.on_event("startup")
 async def startup_event():
