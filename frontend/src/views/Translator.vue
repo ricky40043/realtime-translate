@@ -7,27 +7,32 @@
         語音剩 {{ quotaText(quota.speech) }} · 翻譯剩 {{ quotaText(quota.translate) }}
       </p>
       <button class="pair-chip" type="button" :disabled="sameLanguage" @click="settingsOpen = !settingsOpen">
-        {{ languageName(langA) }} ⇄ {{ languageName(langB) }}
+        <span class="pair-text">{{ sideLabel(langA) }} ⇄ {{ sideLabel(langB) }}</span>
         <span aria-hidden="true">{{ settingsOpen ? '⌃' : '⌄' }}</span>
       </button>
       </div>
     </header>
 
     <div v-if="settingsOpen" class="settings-panel">
-      <label class="language-field">
-        <span>語言 A</span>
-        <select v-model="langA">
-          <option v-for="language in languages" :key="language.code" :value="language.code">{{ language.name }}</option>
-        </select>
-      </label>
-      <button class="swap-button" type="button" aria-label="交換語言" @click="swapLanguages">⇄</button>
-      <label class="language-field">
-        <span>語言 B</span>
-        <select v-model="langB">
-          <option v-for="language in languages" :key="language.code" :value="language.code">{{ language.name }}</option>
-        </select>
-      </label>
-      <p v-if="sameLanguage" class="field-error">請選擇兩種不同的語言。</p>
+      <template v-for="(side, sideIndex) in sides" :key="side.key">
+      <button v-if="sideIndex === 1" class="swap-button" type="button" aria-label="交換語言" @click="swapLanguages">⇄</button>
+      <div class="language-field">
+        <span>語言 {{ side.key }}<small v-if="sideIndex === 0">每邊可多選；講這邊任一種語言，都翻成另一邊的「主要」語言（第一個）</small></span>
+        <div class="lang-chips">
+          <span v-for="(code, index) in side.list.value" :key="code" class="lang-chip" :class="{ primary: index === 0 }">
+            <button type="button" class="chip-name" :title="index === 0 ? '主要語言' : '設為主要語言'" @click="makePrimary(side.list, code)">
+              {{ languageName(code) }}<em v-if="index === 0 && side.list.value.length > 1">主要</em>
+            </button>
+            <button v-if="side.list.value.length > 1" type="button" class="chip-remove" :aria-label="`移除${languageName(code)}`" @click="removeLang(side.list, code)">×</button>
+          </span>
+          <select class="add-lang" :value="''" @change="addLang(side.list, $event)">
+            <option value="" disabled>＋ 加語言</option>
+            <option v-for="language in availableFor(side.list.value)" :key="language.code" :value="language.code">{{ language.name }}</option>
+          </select>
+        </div>
+      </div>
+      </template>
+      <p v-if="sameLanguage" class="field-error">A、B 兩邊不能有同一種語言（{{ overlapName }}）。</p>
     </div>
 
     <section ref="conversationEl" class="conversation" aria-live="polite" @scroll="onConversationScroll">
@@ -74,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { authApi } from '../api/http'
 import { speechApi, type QuotaInfo, type TranslatorResponse } from '../api/speech'
 import { useSessionStore } from '../stores/session'
@@ -140,8 +145,10 @@ interface Entry {
 interface Block { data: Float32Array; db: number; voiced: boolean }
 
 const sessionStore = useSessionStore()
-const langA = ref('zh-TW')
-const langB = ref('en')
+// 每一邊可以多選；第一個是「主要」語言，另一邊講的話都翻成它
+const langA = ref<string[]>(loadLangs('translatorLangA', ['zh-TW']))
+const langB = ref<string[]>(loadLangs('translatorLangB', ['en']))
+const sides = [{ key: 'A', list: langA }, { key: 'B', list: langB }]
 const settingsOpen = ref(true)
 const authReady = ref(false)
 const isRecording = ref(false)
@@ -186,7 +193,11 @@ let followBottom = true
 let lastActivityAt = 0         // 開始錄音或最後一次翻出內容的時間
 let pendingFinals = 0
 
-const sameLanguage = computed(() => langA.value === langB.value)
+const overlap = computed(() => langA.value.find(a => langB.value.some(b => sameFamily(a, b))) || '')
+const overlapName = computed(() => languageName(overlap.value))
+const sameLanguage = computed(() => !!overlap.value)
+watch(langA, v => saveLangs('translatorLangA', v), { deep: true })
+watch(langB, v => saveLangs('translatorLangB', v), { deep: true })
 const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(e)))
 
 onMounted(async () => {
@@ -195,9 +206,9 @@ onMounted(async () => {
     try {
       const response = await authApi.guestLogin(
         `用戶_${Math.random().toString(36).slice(2, 8)}`,
-        langA.value,
-        langA.value,
-        langB.value,
+        langA.value[0],
+        langA.value[0],
+        langB.value[0],
       )
       sessionStore.setAuth({
         id: response.user_id,
@@ -232,6 +243,40 @@ function applyQuota(result: TranslatorResponse) {
 
 function quotaText(info: QuotaInfo | null): string {
   return info ? info.remaining.toLocaleString() : '—'
+}
+
+function loadLangs(key: string, fallback: string[]): string[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || 'null')
+    if (Array.isArray(saved) && saved.length && saved.every(c => languages.some(l => l.code === c))) return saved
+  } catch { /* 讀不到就用預設 */ }
+  return fallback
+}
+
+function saveLangs(key: string, value: string[]) {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* 存不了也沒關係 */ }
+}
+
+function sideLabel(list: string[]): string {
+  return list.map(languageName).join('、')
+}
+
+function availableFor(list: string[]) {
+  return languages.filter(language => !list.includes(language.code))
+}
+
+function addLang(list: Ref<string[]>, event: Event) {
+  const select = event.target as HTMLSelectElement
+  if (select.value && !list.value.includes(select.value)) list.value = [...list.value, select.value]
+  select.value = ''
+}
+
+function removeLang(list: Ref<string[]>, code: string) {
+  if (list.value.length > 1) list.value = list.value.filter(c => c !== code)
+}
+
+function makePrimary(list: Ref<string[]>, code: string) {
+  list.value = [code, ...list.value.filter(c => c !== code)]
 }
 
 function swapLanguages() {
@@ -442,7 +487,7 @@ function maybeSendInterim() {
   const seq = ++interimSeq
   const wav = encodeWav(blocks)
   requestCount++
-  speechApi.translate(wav, langA.value, langB.value, { isFinal: false })
+  speechApi.translate(wav, langA.value.join(','), langB.value.join(','), { isFinal: false })
     .then(result => {
       applyQuota(result)
       interimInterval = Math.max(MIN_INTERVAL, interimInterval * 0.9)
@@ -491,7 +536,7 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
   try {
     // 不把前一段文字當提示給 Whisper：換人講另一種語言時，提示會把新的話硬轉成前一種語言
     requestCount++
-    const result = await speechApi.translate(wav, langA.value, langB.value, { isFinal: true })
+    const result = await speechApi.translate(wav, langA.value.join(','), langB.value.join(','), { isFinal: true })
     target.final = true
     applyQuota(result)
     if (result.status === 'ok' && result.transcript) {
@@ -579,7 +624,7 @@ function entryTranslation(target: Entry): string {
 }
 
 function isSideA(code: string): boolean {
-  return sameFamily(code, langA.value)
+  return langA.value.some(a => sameFamily(code, a))
 }
 
 function onConversationScroll() {
@@ -661,15 +706,25 @@ function languageName(code: string): string {
 }
 
 .top-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding-bottom: .6rem; }
-h1 { margin: 0; font-size: 1.15rem; }
-.top-right { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
+h1 { margin: 0; font-size: 1.15rem; white-space: nowrap; }
+.top-right { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
 .quota { margin: 0; color: rgba(255,255,255,.5); font-size: .7rem; white-space: nowrap; }
-.pair-chip { display: flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(255,255,255,.08); color: #fff; font-size: .9rem; }
+.pair-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pair-chip { max-width: min(62vw, 420px); display: flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(255,255,255,.08); color: #fff; font-size: .9rem; }
 
-.settings-panel { display: grid; grid-template-columns: 1fr auto 1fr; gap: .6rem; align-items: end; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }
+.settings-panel { display: grid; grid-template-columns: 1fr; gap: .6rem; align-items: end; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }
 .language-field { display: flex; flex-direction: column; gap: .35rem; font-size: .85rem; font-weight: 600; }
 select { width: 100%; min-height: 44px; padding: .55rem .7rem; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; background: #252145; color: #fff; font-size: 1rem; }
-.swap-button { min-height: 44px; padding: 0 .8rem; border: 0; border-radius: 10px; background: rgba(196,181,253,.15); color: #c4b5fd; font-size: 1.3rem; }
+.swap-button { justify-self: center; transform: rotate(90deg); min-height: 44px; padding: 0 .8rem; border: 0; border-radius: 10px; background: rgba(196,181,253,.15); color: #c4b5fd; font-size: 1.3rem; }
+.language-field small { display: block; margin-top: .15rem; font-weight: 400; font-size: .72rem; opacity: .6; }
+.lang-chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.lang-chip { display: inline-flex; align-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: #252145; }
+.lang-chip.primary { border-color: #a78bfa; background: rgba(167,139,250,.22); }
+.chip-name { display: inline-flex; gap: .35rem; align-items: center; min-height: 38px; padding: 0 .4rem 0 .8rem; border: 0; background: none; color: #fff; font-size: .95rem; }
+.lang-chip:not(:has(.chip-remove)) .chip-name { padding-right: .8rem; }
+.chip-name em { font-style: normal; font-size: .68rem; padding: .05rem .35rem; border-radius: 6px; background: #a78bfa; color: #1e1b4b; }
+.chip-remove { min-width: 32px; min-height: 38px; border: 0; background: none; color: rgba(255,255,255,.6); font-size: 1.1rem; }
+select.add-lang { width: auto; min-height: 38px; padding: 0 .6rem; border-style: dashed; border-radius: 999px; font-size: .9rem; }
 .field-error { grid-column: 1 / -1; margin: 0; color: #fda4af; font-size: .9rem; text-align: center; }
 
 .conversation { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .8rem; padding: .4rem 0 1rem; }
