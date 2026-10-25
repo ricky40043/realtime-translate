@@ -1,8 +1,9 @@
 import asyncio
 import re
+import time
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from ..deps import get_current_user
@@ -46,6 +47,7 @@ class TranslatorResponse(BaseModel):
     quota: Optional[dict] = None
     # 一段話裡其實是兩個人接著講（不同語言）時拆開的結果；第一段同時放在上面的欄位
     segments: Optional[List[TranslatorSegment]] = None
+    server_ms: Optional[int] = None
 
 
 # These are the language families the two-way mode can match reliably.  The
@@ -223,9 +225,20 @@ async def translate_audio(
     is_final: bool = Form(True),
     current_user: str = Depends(get_current_user),
 ):
+    started = time.perf_counter()
     response = await _translate_audio(audio, lang_a, lang_b, is_final, current_user)
     response.quota = groq_quota.cached()
+    # 伺服器處理花的時間：前端用「來回時間 − 這個」算出網路上傳速度，決定要不要壓縮
+    response.server_ms = int((time.perf_counter() - started) * 1000)
     return response
+
+
+@router.post("/ping")
+async def ping(request: Request, current_user: str = Depends(get_current_user)):
+    """測網速用：收下一段資料就回傳，不呼叫任何模型、不用額度"""
+    _ = current_user
+    body = await request.body()
+    return {"bytes": len(body)}
 
 
 async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final: bool, current_user: str) -> TranslatorResponse:

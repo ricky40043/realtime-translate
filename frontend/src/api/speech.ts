@@ -18,6 +18,7 @@ export interface TranslatorResponse {
   confidence: number
   status?: 'ok' | 'empty' | 'other_lang'
   quota?: { speech: QuotaInfo | null; translate: QuotaInfo | null } | null
+  server_ms?: number | null
   segments?: { transcript: string; translated_text: string; source_lang: string; target_lang: string }[] | null
 }
 
@@ -66,6 +67,21 @@ export const speechApi = {
     }
 
     return response.json()
+  },
+
+  /**
+   * 測網速：上傳一段資料，回傳來回毫秒數（不用模型額度）
+   */
+  async ping(bytes: number): Promise<number> {
+    const started = performance.now()
+    const response = await fetch(`${API_BASE}/translator/ping`, {
+      method: 'POST',
+      body: new Uint8Array(bytes),
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/octet-stream' },
+    })
+    if (!response.ok) throw Object.assign(new Error('ping failed'), { status: response.status })
+    await response.json()
+    return performance.now() - started
   },
 
   /**

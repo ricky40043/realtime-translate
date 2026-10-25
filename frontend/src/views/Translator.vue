@@ -354,6 +354,7 @@ async function startRecording() {
     isRecording.value = true
     lastActivityAt = performance.now() / 1000
     settingsOpen.value = false
+    testNetwork()
     requestWakeLock()
   } catch (error) {
     teardownAudio()
@@ -419,7 +420,7 @@ function onAudioBlock(event: AudioProcessingEvent) {
 
   speaking.value = inSpeech
   level.value = Math.max(0, Math.min(1, (db - floor) / 30))
-  if (debug) debugText.value = `${Math.round(db)}dB 背景${Math.round(floor ?? 0)} 已送${requestCount}`
+  if (debug) debugText.value = `${Math.round(db)}dB 背景${Math.round(floor ?? 0)} 已送${requestCount} ${lastFormat} ${uploadBps ? (uploadBps / 1e6).toFixed(1) + 'Mbps' : ''}`
 
   blocks.push({ data, db, voiced })
   if (voiced) {
@@ -517,7 +518,7 @@ function maybeSendInterim() {
   const seq = ++interimSeq
   const wav = encodeWav(blocks)
   requestCount++
-  speechApi.translate(wav, langA.value.join(','), langB.value.join(','), { isFinal: false })
+  timedTranslate(wav, false)
     .then(result => {
       applyQuota(result)
       interimInterval = Math.max(MIN_INTERVAL, interimInterval * 0.9)
@@ -569,7 +570,7 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     requestCount++
     const sentAt = performance.now()
     const slowTimer = window.setTimeout(() => { slowNetwork.value = true }, SLOW_NETWORK_SEC * 1000)
-    const result = await speechApi.translate(wav, langA.value.join(','), langB.value.join(','), { isFinal: true })
+    const result = await timedTranslate(wav, true)
     window.clearTimeout(slowTimer)
     slowNetwork.value = performance.now() - sentAt > SLOW_NETWORK_SEC * 1000
     target.final = true
@@ -690,14 +691,57 @@ function scrollToBottom() {
 }
 
 // 降到 16kHz 單聲道 16-bit WAV（Whisper 本來就用 16kHz，檔案也小）
-// 上傳前壓成 MP3（每秒約 4 KB，WAV 是 32 KB）：展場網路差時等最久的就是上傳
+// 上傳格式看網速決定：MP3 每秒約 4 KB、WAV 32 KB，但壓縮要花時間（手機上每秒語音約 10–25 ms）。
+// 網路慢時壓縮省很多上傳時間；網路很快時不壓縮反而比較快。每次送出都重新估算網速。
+let uploadBps = 0              // 估計的上傳速度（bit/s），0 = 還不知道
+let baseLatencyMs = 0          // 網路來回的固定延遲
+let encodeMsPerSec = 15        // 壓縮每秒語音要幾毫秒（實際量到後更新）
+let lastFormat = ''
+
 function encodeWav(segment: Block[]): Blob {
   const pcm = toPcm16k(segment)
-  try {
-    return encodeMp3(pcm)
-  } catch {
-    return pcmToWav(pcm)
+  const sec = pcm.length / TARGET_SAMPLE_RATE
+  let useMp3 = true            // 還沒量到網速：先壓縮比較保險
+  if (uploadBps > 0) {
+    const wavMs = (sec * TARGET_SAMPLE_RATE * 2 * 8 / uploadBps) * 1000
+    const mp3Ms = (sec * MP3_KBPS * 1000 / uploadBps) * 1000 + encodeMsPerSec * sec
+    useMp3 = mp3Ms < wavMs
   }
+  if (useMp3) {
+    try {
+      const started = performance.now()
+      const blob = encodeMp3(pcm)
+      if (sec > 0.5) encodeMsPerSec = encodeMsPerSec * 0.7 + ((performance.now() - started) / sec) * 0.3
+      lastFormat = 'MP3'
+      return blob
+    } catch { /* 壓縮失敗就送 WAV */ }
+  }
+  lastFormat = 'WAV'
+  return pcmToWav(pcm)
+}
+
+// 送出並計時：來回時間扣掉伺服器處理時間和固定延遲，剩下的就是上傳花的時間
+async function timedTranslate(blob: Blob, isFinal: boolean): Promise<TranslatorResponse> {
+  const started = performance.now()
+  const result = await speechApi.translate(blob, langA.value.join(','), langB.value.join(','), { isFinal })
+  const transferMs = performance.now() - started - (result.server_ms ?? 0) - baseLatencyMs
+  if (result.server_ms != null && blob.size > 8000) updateUploadSpeed(blob.size, transferMs)
+  return result
+}
+
+function updateUploadSpeed(bytes: number, transferMs: number) {
+  const sample = (bytes * 8) / (Math.max(transferMs, 10) / 1000)
+  uploadBps = uploadBps ? uploadBps * 0.7 + sample * 0.3 : sample
+}
+
+// 開始翻譯時先測一次網速（不用模型額度）：先量固定延遲，再傳 96 KB 量上傳速度
+async function testNetwork() {
+  try {
+    const latency = Math.min(await speechApi.ping(0), await speechApi.ping(0))
+    baseLatencyMs = latency
+    const ms = await speechApi.ping(96 * 1024)
+    updateUploadSpeed(96 * 1024, ms - latency)
+  } catch { /* 測不到就先用壓縮 */ }
 }
 
 function toPcm16k(segment: Block[]): Int16Array {
