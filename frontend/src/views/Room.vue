@@ -1,6 +1,7 @@
 <template>
   <div class="home">
     <header class="home-header">
+      <router-link to="/" class="back-home">← 回首頁</router-link>
       <div class="logo">🌍</div>
       <h1>多語言即時翻譯</h1>
       <p>語音即時翻譯，多語言無障礙溝通</p>
@@ -213,9 +214,22 @@ async function joinRoom() {
 }
 
 .home-header {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
   text-align: center;
   color: white;
   padding: 2.5rem 1rem 1.5rem;
+}
+
+.back-home {
+  position: absolute;
+  top: 1rem;
+  left: 0;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.9rem;
+  text-decoration: none;
 }
 
 .logo {
