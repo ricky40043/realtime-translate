@@ -16,6 +16,9 @@ print("✅ 翻譯：Groq LLM 為主，Google Translate JSON 端點為備援（as
 GROQ_TRANSLATE_MODEL = os.getenv("GROQ_TRANSLATE_MODEL", "openai/gpt-oss-120b")
 # 講話中的即時預覽用較快的小模型，額度也與正式翻譯分開
 GROQ_FAST_TRANSLATE_MODEL = os.getenv("GROQ_FAST_TRANSLATE_MODEL", "openai/gpt-oss-20b")
+# Groq 每個模型有各自的每分鐘上限；選的模型被限流（429）時依序改用這些模型
+GROQ_FALLBACK_TRANSLATE_MODELS = [m.strip() for m in os.getenv(
+    "GROQ_EXTRA_TRANSLATE_MODELS", "openai/gpt-oss-20b,qwen/qwen3.8-27b").split(",") if m.strip()]
 
 # 給 LLM 的目標語言名稱（明確指定繁/簡，避免模型自行判斷）
 _TARGET_NAMES = {
@@ -83,13 +86,16 @@ class FreeTranslateService:
         src = 'auto'
         tgt = self._convert_lang(target_lang)
 
+        first = model or (GROQ_FAST_TRANSLATE_MODEL if fast else GROQ_TRANSLATE_MODEL)
+        groq_models = list(dict.fromkeys([first, GROQ_TRANSLATE_MODEL, GROQ_FAST_TRANSLATE_MODEL,
+                                          *GROQ_FALLBACK_TRANSLATE_MODELS]))
+        attempts = [(f"groq:{m}", lambda m=m: self._groq_translate(text, tgt, m)) for m in groq_models]
+        attempts.append(("google", lambda: self._google_translate(text, tgt)))
+
         errors = []
-        for provider in (self._groq_translate, self._google_translate):
+        for name, attempt in attempts:
             try:
-                translated, provider_name = await (
-                    provider(text, tgt, model or (GROQ_FAST_TRANSLATE_MODEL if fast else GROQ_TRANSLATE_MODEL))
-                    if provider == self._groq_translate else provider(text, tgt)
-                )
+                translated, provider_name = await attempt()
                 latency_ms = int((time.time() - start) * 1000)
                 print(f"   [Translate] {provider_name} {src}->{tgt} 耗時: {latency_ms}ms")
                 return {
@@ -101,8 +107,8 @@ class FreeTranslateService:
                     'provider': provider_name,
                 }
             except Exception as e:
-                errors.append(f"{provider.__name__}: {e}")
-                print(f"   [Translate] {provider.__name__} {src}->{tgt} 失敗: {e}")
+                errors.append(f"{name}: {e}")
+                print(f"   [Translate] {name} {src}->{tgt} 失敗: {str(e).split(' for url')[0]}")
 
         latency_ms = int((time.time() - start) * 1000)
         print(f"   [Translate] ❌ 所有翻譯服務皆失敗({latency_ms}ms)，回傳原文")

@@ -287,15 +287,20 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
     else:
         # "groq:<模型>"：設定畫面指定的 Groq 模型（每個模型的免費額度分開算）
         chosen = stt_model[5:] if stt_model.startswith("groq:") else None
-        stt_result = await stt_service.transcribe_audio(
-            audio_data,
-            audio.content_type or "audio/webm",
-            None,
-            None,
-            chosen or (None if is_final else INTERIM_STT_MODEL),
-        )
+        stt_first = chosen or ("whisper-large-v3" if is_final else INTERIM_STT_MODEL)
+        # 每個 Whisper 模型的每分鐘上限分開算：被限流（429）就換另一個模型再試
+        for model in [stt_first, *[m for m in ("whisper-large-v3-turbo", "whisper-large-v3") if m != stt_first]]:
+            stt_result = await stt_service.transcribe_audio(
+                audio_data,
+                audio.content_type or "audio/webm",
+                None,
+                None,
+                model,
+            )
+            if not stt_result.get("rate_limited"):
+                break
     if stt_result.get("rate_limited"):
-        raise HTTPException(status_code=429, detail="Speech recognition rate limit reached")
+        raise HTTPException(status_code=429, detail="語音辨識暫時忙碌（每分鐘次數已滿），請稍等幾秒再說")
 
     no_speech = float(stt_result.get("no_speech_prob") or 0.0)
     transcript = filter_ai_default_responses(
@@ -393,7 +398,7 @@ async def _translate_part(text: str, source_lang: str, target_lang: str, is_fina
         model=translate_model[5:] if translate_model.startswith("groq:") else None,
     )
     if translation.get("error"):
-        raise HTTPException(status_code=502, detail="Translation service failed")
+        raise HTTPException(status_code=503, detail="翻譯服務暫時忙碌（每分鐘次數已滿），請稍等幾秒再說")
     return text, translation.get("text") or ""
 
 
