@@ -10,12 +10,13 @@ import Settings from './views/Settings.vue'
 import HostBoard from './views/HostBoard.vue'
 import UserView from './views/UserView.vue'
 import Translator from './views/Translator.vue'
+import Home from './views/Home.vue'
 
 // 建立路由
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/translator' },
+    { path: '/', component: Home, name: 'home' },
     { path: '/translator', component: Translator, name: 'translator' },
     { path: '/room/:roomId?', component: Room, name: 'room' },
     { path: '/host/:roomId', component: HostBoard, name: 'host' },
