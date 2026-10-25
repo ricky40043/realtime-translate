@@ -202,7 +202,37 @@ const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(
 
 onMounted(async () => {
   sessionStore.loadAuth()
-  if (!sessionStore.isAuthenticated) {
+  if (!sessionStore.isAuthenticated && !(await guestLogin())) return
+  authReady.value = true
+  refreshQuota()
+  quotaTimer = window.setInterval(refreshQuota, 60_000)
+})
+
+onBeforeUnmount(() => {
+  stopRecording()
+  if (quotaTimer !== null) window.clearInterval(quotaTimer)
+})
+
+async function refreshQuota() {
+  try { quota.value = await speechApi.quota() } catch (error: any) {
+    // 查不到就維持上一次的數字；憑證過期就重新登入
+    if (error?.status === 401 && await guestLogin()) quota.value = await speechApi.quota().catch(() => quota.value)
+  }
+}
+
+// 每次翻譯的回應都帶著最新剩餘次數，直接更新；沒在講話時靠每分鐘查一次
+function applyQuota(result: TranslatorResponse) {
+  if (result.quota?.speech || result.quota?.translate) quota.value = result.quota
+}
+
+function quotaText(info: QuotaInfo | null): string {
+  return info ? info.remaining.toLocaleString() : '—'
+}
+
+// 用訪客身分登入；登入憑證過期（7 天）時也用這個重新拿一張
+let loginPromise: Promise<boolean> | null = null
+function guestLogin(): Promise<boolean> {
+  loginPromise ??= (async () => {
     try {
       const response = await authApi.guestLogin(
         `用戶_${Math.random().toString(36).slice(2, 8)}`,
@@ -217,32 +247,16 @@ onMounted(async () => {
         inputLang: response.input_lang,
         outputLang: response.output_lang,
       }, response.token)
+      errorMessage.value = ''
+      return true
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : '登入失敗，無法使用翻譯功能'
-      return
+      return false
+    } finally {
+      loginPromise = null
     }
-  }
-  authReady.value = true
-  refreshQuota()
-  quotaTimer = window.setInterval(refreshQuota, 60_000)
-})
-
-onBeforeUnmount(() => {
-  stopRecording()
-  if (quotaTimer !== null) window.clearInterval(quotaTimer)
-})
-
-async function refreshQuota() {
-  try { quota.value = await speechApi.quota() } catch { /* 查不到就維持上一次的數字 */ }
-}
-
-// 每次翻譯的回應都帶著最新剩餘次數，直接更新；沒在講話時靠每分鐘查一次
-function applyQuota(result: TranslatorResponse) {
-  if (result.quota?.speech || result.quota?.translate) quota.value = result.quota
-}
-
-function quotaText(info: QuotaInfo | null): string {
-  return info ? info.remaining.toLocaleString() : '—'
+  })()
+  return loginPromise
 }
 
 function loadLangs(key: string, fallback: string[]): string[] {
@@ -502,6 +516,7 @@ function maybeSendInterim() {
     })
     .catch((error: any) => {
       // 免費額度每分鐘次數有限：被擋就放慢預覽，定稿仍會照常送
+      if (error?.status === 401) guestLogin()
       if (error?.status === 429) {
         interimInterval = Math.min(MAX_INTERVAL, interimInterval * 1.5)
         slowMode.value = interimInterval > 2
@@ -556,6 +571,9 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     pruneEntry(ownerOf(target, owner))
     scrollToBottom()
   } catch (error: any) {
+    if (error?.status === 401 && attempt < 1 && await guestLogin()) {
+      return submitFinal(wav, levels, owner, target, attempt + 1)
+    }
     if (error?.status === 429 && attempt < 4) {
       await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)))
       return submitFinal(wav, levels, owner, target, attempt + 1)
