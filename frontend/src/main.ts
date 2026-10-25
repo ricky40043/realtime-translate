@@ -10,13 +10,15 @@ import Settings from './views/Settings.vue'
 import HostBoard from './views/HostBoard.vue'
 import UserView from './views/UserView.vue'
 import Translator from './views/Translator.vue'
-import Home from './views/Home.vue'
+
+// 同一個服務掛兩個網域：translator.* 首頁是雙向翻譯機，其他（translate.*）首頁是多人連線翻譯
+const isTranslatorHost = window.location.hostname.startsWith('translator.')
 
 // 建立路由
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', component: Home, name: 'home' },
+    { path: '/', redirect: isTranslatorHost ? '/translator' : '/room' },
     { path: '/translator', component: Translator, name: 'translator' },
     { path: '/room/:roomId?', component: Room, name: 'room' },
     { path: '/host/:roomId', component: HostBoard, name: 'host' },

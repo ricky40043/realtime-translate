@@ -1,10 +1,7 @@
 <template>
   <main class="translator-page">
     <header class="top-bar">
-      <div class="title-row">
-        <router-link to="/" class="home-link" aria-label="回首頁" title="回首頁（切換到多人連線翻譯）">⌂</router-link>
-        <h1>雙向翻譯機</h1>
-      </div>
+      <h1>雙向翻譯機</h1>
       <div class="top-right">
       <p v-if="quota" class="quota" title="Groq 剩餘可呼叫次數，每次翻譯後更新">
         語音剩 {{ quotaText(quota.speech) }} · 翻譯剩 {{ quotaText(quota.translate) }}
@@ -890,8 +887,6 @@ function languageName(code: string): string {
 
 .top-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding-bottom: .6rem; }
 h1 { margin: 0; font-size: 1.15rem; white-space: nowrap; }
-.title-row { display: flex; align-items: center; gap: .45rem; }
-.home-link { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2); color: #fff; font-size: 1.1rem; text-decoration: none; flex-shrink: 0; }
 .top-right { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
 .quota { margin: 0; color: rgba(255,255,255,.5); font-size: .7rem; white-space: nowrap; }
 .pair-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
