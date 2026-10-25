@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@breezystack/lamejs": "1.2.7",
     "node-fetch": "^3.3.2",
     "pinia": "^3.0.3",
     "qrcode": "^1.5.4",

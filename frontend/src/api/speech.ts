@@ -18,7 +18,14 @@ export interface TranslatorResponse {
   confidence: number
   status?: 'ok' | 'empty' | 'other_lang'
   quota?: { speech: QuotaInfo | null; translate: QuotaInfo | null } | null
+  server_ms?: number | null
   segments?: { transcript: string; translated_text: string; source_lang: string; target_lang: string }[] | null
+}
+
+export interface ModelOption {
+  id: string
+  label: string
+  available: boolean
 }
 
 export interface QuotaInfo {
@@ -37,15 +44,18 @@ export const speechApi = {
     audioBlob: Blob,
     langA: string,
     langB: string,
-    options: { isFinal?: boolean } = {}
+    options: { isFinal?: boolean; sttModel?: string; translateModel?: string } = {}
   ): Promise<TranslatorResponse> {
     const formData = new FormData()
-    const ext = audioBlob.type.includes('wav') ? 'wav' : audioBlob.type.includes('mp4') ? 'm4a' : audioBlob.type.includes('ogg') ? 'ogg' : 'webm'
+    const ext = audioBlob.type.includes('mpeg') ? 'mp3' : audioBlob.type.includes('wav') ? 'wav' : audioBlob.type.includes('mp4') ? 'm4a' : audioBlob.type.includes('ogg') ? 'ogg' : 'webm'
     formData.append('audio', audioBlob, `translator.${ext}`)
     formData.append('lang_a', langA)
     formData.append('lang_b', langB)
     // 講話中的即時預覽 is_final=false；一句講完才送 true
     formData.append('is_final', String(options.isFinal ?? true))
+    // 空的 = 雲端 Groq；"local:…" / "ollama:…" = 本機模型
+    if (options.sttModel) formData.append('stt_model', options.sttModel)
+    if (options.translateModel) formData.append('translate_model', options.translateModel)
 
     const response = await fetch(`${API_BASE}/translator/translate`, {
       method: 'POST',
@@ -65,6 +75,30 @@ export const speechApi = {
       throw Object.assign(new Error(message), { status: response.status })
     }
 
+    return response.json()
+  },
+
+  /**
+   * 測網速：上傳一段資料，回傳來回毫秒數（不用模型額度）
+   */
+  async ping(bytes: number): Promise<number> {
+    const started = performance.now()
+    const response = await fetch(`${API_BASE}/translator/ping`, {
+      method: 'POST',
+      body: new Uint8Array(bytes),
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/octet-stream' },
+    })
+    if (!response.ok) throw Object.assign(new Error('ping failed'), { status: response.status })
+    await response.json()
+    return performance.now() - started
+  },
+
+  /**
+   * 設定畫面可選的語音辨識、翻譯模型（雲端 + 本機）
+   */
+  async models(): Promise<{ stt: ModelOption[]; translate: ModelOption[] }> {
+    const response = await fetch(`${API_BASE}/translator/models`, { headers: getAuthHeaders() })
+    if (!response.ok) throw Object.assign(new Error('models unavailable'), { status: response.status })
     return response.json()
   },
 

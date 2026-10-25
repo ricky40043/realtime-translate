@@ -1,0 +1,10 @@
+# 用 Caddy 自己發的憑證提供 HTTPS（手機要先信任 local-ai/手機憑證.crt，見 local-ai/README.md）
+{
+	# 用 IP 連線時瀏覽器不會說要哪個網址的憑證，預設給 IP 這張
+	default_sni {$LAN_IP}
+}
+
+https://localhost, https://{$LAN_IP} {
+	tls internal
+	reverse_proxy nginx:80
+}

@@ -1,0 +1,6 @@
+fastapi==0.143.0
+uvicorn==0.54.0
+python-multipart==0.0.32
+faster-whisper==1.2.1
+# faster-whisper 1.2.1 用到的 av.open(metadata_errors=…) 在 av 19 被拿掉了
+av==18.1.0

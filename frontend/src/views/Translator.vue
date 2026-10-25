@@ -34,6 +34,21 @@
         </div>
       </div>
       </template>
+      <div class="model-fields">
+        <label class="model-field">
+          <span>語音辨識</span>
+          <select v-model="sttModel">
+            <option v-for="m in modelOptions.stt" :key="m.id" :value="m.id" :disabled="!m.available">{{ m.label }}{{ m.available ? '' : '（未設定）' }}</option>
+          </select>
+        </label>
+        <label class="model-field">
+          <span>翻譯模型</span>
+          <select v-model="translateModel">
+            <option v-for="m in modelOptions.translate" :key="m.id" :value="m.id" :disabled="!m.available">{{ m.label }}{{ m.available ? '' : '（未設定）' }}</option>
+          </select>
+        </label>
+        <small v-if="isLocal">本機模型不需要網路；第一次使用要等模型載入（約 10–30 秒）。</small>
+      </div>
       <p v-if="sameLanguage" class="field-error">A、B 兩邊不能有同一種語言（{{ overlapName }}）。</p>
     </div>
 
@@ -61,7 +76,7 @@
       <p v-if="noticeMessage && !isRecording" class="status notice">{{ noticeMessage }}</p>
       <div v-if="isRecording" class="listen-status">
         <div class="level-bar"><div class="level-fill" :class="{ speaking }" :style="{ width: `${Math.round(level * 100)}%` }"></div></div>
-        <span>{{ speaking ? '偵測到說話' : '聆聽中' }}{{ slowMode ? '（額度有限，預覽放慢）' : '' }}</span>
+        <span>{{ speaking ? '偵測到說話' : '聆聽中' }}{{ slowNetwork ? '（網路較慢，翻譯會延遲）' : slowMode ? '（額度有限，預覽放慢）' : '' }}</span>
         <span v-if="debug" class="debug">{{ debugText }}</span>
       </div>
       <button
@@ -82,8 +97,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { Mp3Encoder } from '@breezystack/lamejs'
 import { authApi } from '../api/http'
-import { speechApi, type QuotaInfo, type TranslatorResponse } from '../api/speech'
+import { speechApi, type ModelOption, type QuotaInfo, type TranslatorResponse } from '../api/speech'
 import { useSessionStore } from '../stores/session'
 
 const languages = [
@@ -111,6 +127,8 @@ const languages = [
 // 連續收音：一直錄，用「有沒有人講話」決定一句話的開始和結束，不再每 3 秒硬切
 const BLOCK_SIZE = 2048
 const TARGET_SAMPLE_RATE = 16000
+const MP3_KBPS = 32
+const SLOW_NETWORK_SEC = 4     // 一句定稿來回超過這麼久，提示網路慢
 const PREROLL_SEC = 0.3        // 開口前保留的聲音，避免第一個字被切掉
 const PAUSE_SEC = 0.7          // 停頓多久算一句講完
 const MAX_PIECE_SEC = 8        // 一直講不停時，最長多久先定稿一段
@@ -151,12 +169,21 @@ const sessionStore = useSessionStore()
 const langA = ref<string[]>(loadLangs('translatorLangA', ['zh-TW']))
 const langB = ref<string[]>(loadLangs('translatorLangB', ['en']))
 const sides = [{ key: 'A', list: langA }, { key: 'B', list: langB }]
+// 模型：groq = 雲端；local:… / ollama:… = 這台電腦上的本機模型（不需要網路）
+const modelOptions = ref<{ stt: ModelOption[]; translate: ModelOption[] }>({
+  stt: [{ id: 'groq', label: '雲端 Groq · Whisper', available: true }],
+  translate: [{ id: 'groq', label: '雲端 Groq', available: true }],
+})
+const sttModel = ref(loadSetting('translatorSttModel', 'groq'))
+const translateModel = ref(loadSetting('translatorTranslateModel', 'groq'))
+const isLocal = computed(() => sttModel.value !== 'groq' || translateModel.value !== 'groq')
 const settingsOpen = ref(true)
 const authReady = ref(false)
 const isRecording = ref(false)
 const speaking = ref(false)
 const level = ref(0)
 const slowMode = ref(false)
+const slowNetwork = ref(false)
 // 網址加 ?debug=1 顯示音量數字，現場調整用
 const debug = new URLSearchParams(location.search).has('debug')
 const debugText = ref('')
@@ -200,12 +227,15 @@ const overlapName = computed(() => languageName(overlap.value))
 const sameLanguage = computed(() => !!overlap.value)
 watch(langA, v => saveLangs('translatorLangA', v), { deep: true })
 watch(langB, v => saveLangs('translatorLangB', v), { deep: true })
+watch(sttModel, v => saveSetting('translatorSttModel', v))
+watch(translateModel, v => saveSetting('translatorTranslateModel', v))
 const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(e)))
 
 onMounted(async () => {
   sessionStore.loadAuth()
   if (!sessionStore.isAuthenticated && !(await guestLogin())) return
   authReady.value = true
+  loadModels()
   refreshQuota()
   quotaTimer = window.setInterval(refreshQuota, 60_000)
 })
@@ -259,6 +289,33 @@ function guestLogin(): Promise<boolean> {
     }
   })()
   return loginPromise
+}
+
+async function loadModels() {
+  try {
+    const options = await speechApi.models()
+    modelOptions.value = options
+    // 記住的模型不在了（換電腦、模型刪掉）或雲端沒設定：改用第一個能用的
+    const pick = (list: ModelOption[], current: string) =>
+      list.find(m => m.id === current && m.available)?.id || list.find(m => m.available)?.id || current
+    sttModel.value = pick(options.stt, sttModel.value)
+    translateModel.value = pick(options.translate, translateModel.value)
+  } catch { /* 讀不到就維持雲端 */ }
+}
+
+function modelChoice() {
+  return {
+    sttModel: sttModel.value === 'groq' ? '' : sttModel.value,
+    translateModel: translateModel.value === 'groq' ? '' : translateModel.value,
+  }
+}
+
+function loadSetting(key: string, fallback: string): string {
+  try { return localStorage.getItem(key) || fallback } catch { return fallback }
+}
+
+function saveSetting(key: string, value: string) {
+  try { localStorage.setItem(key, value) } catch { /* 存不了也沒關係 */ }
 }
 
 function loadLangs(key: string, fallback: string[]): string[] {
@@ -350,6 +407,7 @@ async function startRecording() {
     isRecording.value = true
     lastActivityAt = performance.now() / 1000
     settingsOpen.value = false
+    testNetwork()
     requestWakeLock()
   } catch (error) {
     teardownAudio()
@@ -415,7 +473,7 @@ function onAudioBlock(event: AudioProcessingEvent) {
 
   speaking.value = inSpeech
   level.value = Math.max(0, Math.min(1, (db - floor) / 30))
-  if (debug) debugText.value = `${Math.round(db)}dB 背景${Math.round(floor ?? 0)} 已送${requestCount}`
+  if (debug) debugText.value = `${Math.round(db)}dB 背景${Math.round(floor ?? 0)} 已送${requestCount} ${lastFormat} ${uploadBps ? (uploadBps / 1e6).toFixed(1) + 'Mbps' : ''}`
 
   blocks.push({ data, db, voiced })
   if (voiced) {
@@ -513,16 +571,19 @@ function maybeSendInterim() {
   const seq = ++interimSeq
   const wav = encodeWav(blocks)
   requestCount++
-  speechApi.translate(wav, langA.value.join(','), langB.value.join(','), { isFinal: false })
+  timedTranslate(wav, false)
     .then(result => {
       applyQuota(result)
       interimInterval = Math.max(MIN_INTERVAL, interimInterval * 0.9)
+      // 本機模型比較慢（沒有顯卡時一句要好幾秒）：預覽間隔跟著拉長，不要把定稿卡在後面排隊
+      if ((result.server_ms ?? 0) > 1000) interimInterval = Math.min(8, Math.max(interimInterval, (result.server_ms! / 1000) * 1.5))
       slowMode.value = interimInterval > 2
       if (target.final || seq < target.interimSeq || result.status !== 'ok' || !result.transcript) return
       target.interimSeq = seq
       lastActivityAt = performance.now() / 1000
       target.transcript = result.transcript
-      target.translation = result.translated_text
+      // 本機模型忙的時候預覽只有原文、沒有翻譯：保留上一次的翻譯
+      target.translation = result.translated_text || target.translation
       placePiece(owner, target, result)
       scrollToBottom()
     })
@@ -563,7 +624,11 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
   try {
     // 不把前一段文字當提示給 Whisper：換人講另一種語言時，提示會把新的話硬轉成前一種語言
     requestCount++
-    const result = await speechApi.translate(wav, langA.value.join(','), langB.value.join(','), { isFinal: true })
+    const sentAt = performance.now()
+    const slowTimer = window.setTimeout(() => { slowNetwork.value = true }, SLOW_NETWORK_SEC * 1000)
+    const result = await timedTranslate(wav, true)
+    window.clearTimeout(slowTimer)
+    slowNetwork.value = performance.now() - sentAt > SLOW_NETWORK_SEC * 1000
     target.final = true
     applyQuota(result)
     if (result.status === 'ok' && result.transcript) {
@@ -682,7 +747,60 @@ function scrollToBottom() {
 }
 
 // 降到 16kHz 單聲道 16-bit WAV（Whisper 本來就用 16kHz，檔案也小）
+// 上傳格式看網速決定：MP3 每秒約 4 KB、WAV 32 KB，但壓縮要花時間（手機上每秒語音約 10–25 ms）。
+// 網路慢時壓縮省很多上傳時間；網路很快時不壓縮反而比較快。每次送出都重新估算網速。
+let uploadBps = 0              // 估計的上傳速度（bit/s），0 = 還不知道
+let baseLatencyMs = 0          // 網路來回的固定延遲
+let encodeMsPerSec = 15        // 壓縮每秒語音要幾毫秒（實際量到後更新）
+let lastFormat = ''
+
 function encodeWav(segment: Block[]): Blob {
+  const pcm = toPcm16k(segment)
+  const sec = pcm.length / TARGET_SAMPLE_RATE
+  let useMp3 = true            // 還沒量到網速：先壓縮比較保險
+  if (uploadBps > 0) {
+    const wavMs = (sec * TARGET_SAMPLE_RATE * 2 * 8 / uploadBps) * 1000
+    const mp3Ms = (sec * MP3_KBPS * 1000 / uploadBps) * 1000 + encodeMsPerSec * sec
+    useMp3 = mp3Ms < wavMs
+  }
+  if (useMp3) {
+    try {
+      const started = performance.now()
+      const blob = encodeMp3(pcm)
+      if (sec > 0.5) encodeMsPerSec = encodeMsPerSec * 0.7 + ((performance.now() - started) / sec) * 0.3
+      lastFormat = 'MP3'
+      return blob
+    } catch { /* 壓縮失敗就送 WAV */ }
+  }
+  lastFormat = 'WAV'
+  return pcmToWav(pcm)
+}
+
+// 送出並計時：來回時間扣掉伺服器處理時間和固定延遲，剩下的就是上傳花的時間
+async function timedTranslate(blob: Blob, isFinal: boolean): Promise<TranslatorResponse> {
+  const started = performance.now()
+  const result = await speechApi.translate(blob, langA.value.join(','), langB.value.join(','), { isFinal, ...modelChoice() })
+  const transferMs = performance.now() - started - (result.server_ms ?? 0) - baseLatencyMs
+  if (result.server_ms != null && blob.size > 8000) updateUploadSpeed(blob.size, transferMs)
+  return result
+}
+
+function updateUploadSpeed(bytes: number, transferMs: number) {
+  const sample = (bytes * 8) / (Math.max(transferMs, 10) / 1000)
+  uploadBps = uploadBps ? uploadBps * 0.7 + sample * 0.3 : sample
+}
+
+// 開始翻譯時先測一次網速（不用模型額度）：先量固定延遲，再傳 96 KB 量上傳速度
+async function testNetwork() {
+  try {
+    const latency = Math.min(await speechApi.ping(0), await speechApi.ping(0))
+    baseLatencyMs = latency
+    const ms = await speechApi.ping(96 * 1024)
+    updateUploadSpeed(96 * 1024, ms - latency)
+  } catch { /* 測不到就先用壓縮 */ }
+}
+
+function toPcm16k(segment: Block[]): Int16Array {
   const inputRate = audioContext?.sampleRate || 48000
   const total = segment.reduce((sum, b) => sum + b.data.length, 0)
   const input = new Float32Array(total)
@@ -695,15 +813,39 @@ function encodeWav(segment: Block[]): Blob {
   let peak = 0
   for (let i = 0; i < total; i++) peak = Math.max(peak, Math.abs(input[i]))
   const gain = peak > 0 ? Math.min(20, 0.9 / peak) : 1
-  if (gain > 1) for (let i = 0; i < total; i++) input[i] *= gain
   const ratio = inputRate / TARGET_SAMPLE_RATE
   const outLength = Math.floor(total / ratio)
-  const view = new DataView(new ArrayBuffer(44 + outLength * 2))
+  const out = new Int16Array(outLength)
+  for (let i = 0; i < outLength; i++) {
+    const start = Math.floor(i * ratio)
+    const end = Math.min(total, Math.floor((i + 1) * ratio))
+    let sum = 0
+    for (let j = start; j < end; j++) sum += input[j]
+    const sample = Math.max(-1, Math.min(1, (sum / Math.max(1, end - start)) * gain))
+    out[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
+  }
+  return out
+}
+
+function encodeMp3(pcm: Int16Array): Blob {
+  const encoder = new Mp3Encoder(1, TARGET_SAMPLE_RATE, MP3_KBPS)
+  const chunks: Uint8Array[] = []
+  for (let i = 0; i < pcm.length; i += 1152) {
+    const out = encoder.encodeBuffer(pcm.subarray(i, i + 1152))
+    if (out.length) chunks.push(new Uint8Array(out))
+  }
+  const tail = encoder.flush()
+  if (tail.length) chunks.push(new Uint8Array(tail))
+  return new Blob(chunks as BlobPart[], { type: 'audio/mpeg' })
+}
+
+function pcmToWav(pcm: Int16Array): Blob {
+  const view = new DataView(new ArrayBuffer(44 + pcm.length * 2))
   const writeStr = (pos: number, str: string) => {
     for (let i = 0; i < str.length; i++) view.setUint8(pos + i, str.charCodeAt(i))
   }
   writeStr(0, 'RIFF')
-  view.setUint32(4, 36 + outLength * 2, true)
+  view.setUint32(4, 36 + pcm.length * 2, true)
   writeStr(8, 'WAVE')
   writeStr(12, 'fmt ')
   view.setUint32(16, 16, true)
@@ -714,15 +856,8 @@ function encodeWav(segment: Block[]): Blob {
   view.setUint16(32, 2, true)
   view.setUint16(34, 16, true)
   writeStr(36, 'data')
-  view.setUint32(40, outLength * 2, true)
-  for (let i = 0; i < outLength; i++) {
-    const start = Math.floor(i * ratio)
-    const end = Math.min(total, Math.floor((i + 1) * ratio))
-    let sum = 0
-    for (let j = start; j < end; j++) sum += input[j]
-    const sample = Math.max(-1, Math.min(1, sum / Math.max(1, end - start)))
-    view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
-  }
+  view.setUint32(40, pcm.length * 2, true)
+  for (let i = 0; i < pcm.length; i++) view.setInt16(44 + i * 2, pcm[i], true)
   return new Blob([view], { type: 'audio/wav' })
 }
 
@@ -737,8 +872,11 @@ function languageName(code: string): string {
 
 <style scoped>
 .translator-page {
-  height: 100vh;
-  height: 100dvh;
+  /* 釘在畫面上：手機在按鈕附近往上滑時，整頁不會被推上去、露出底下的白色 */
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
   display: flex;
   flex-direction: column;
   padding: .75rem max(1rem, calc((100% - 720px) / 2)) 0;
@@ -753,7 +891,7 @@ h1 { margin: 0; font-size: 1.15rem; white-space: nowrap; }
 .pair-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pair-chip { max-width: min(62vw, 420px); display: flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(255,255,255,.08); color: #fff; font-size: .9rem; }
 
-.settings-panel { display: grid; grid-template-columns: 1fr; gap: .6rem; align-items: end; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }
+.settings-panel { max-height: 60%; overflow-y: auto; overscroll-behavior: contain; flex-shrink: 0; display: grid; grid-template-columns: 1fr; gap: .6rem; align-items: end; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }
 .language-field { display: flex; flex-direction: column; gap: .35rem; font-size: .85rem; font-weight: 600; }
 select { width: 100%; min-height: 44px; padding: .55rem .7rem; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; background: #252145; color: #fff; font-size: 1rem; }
 .swap-button { justify-self: center; transform: rotate(90deg); min-height: 44px; padding: 0 .8rem; border: 0; border-radius: 10px; background: rgba(196,181,253,.15); color: #c4b5fd; font-size: 1.3rem; }
@@ -767,9 +905,14 @@ select.chip-select { width: auto; min-height: 38px; padding: 0 .2rem 0 .8rem; bo
 .lang-chip:not(:has(.chip-remove)) { padding-right: .4rem; }
 .chip-remove { min-width: 32px; min-height: 38px; border: 0; background: none; color: rgba(255,255,255,.6); font-size: 1.1rem; }
 select.add-lang { width: auto; min-height: 38px; padding: 0 .6rem; border-style: dashed; border-radius: 999px; font-size: .9rem; }
+.model-fields { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; padding-top: .4rem; border-top: 1px solid rgba(255,255,255,.1); }
+.model-field { display: flex; flex-direction: column; gap: .35rem; font-size: .85rem; font-weight: 600; min-width: 0; }
+.model-field select { font-size: .9rem; }
+.model-fields small { grid-column: 1 / -1; font-size: .72rem; opacity: .65; }
+@media (max-width: 480px) { .model-fields { grid-template-columns: 1fr; } }
 .field-error { grid-column: 1 / -1; margin: 0; color: #fda4af; font-size: .9rem; text-align: center; }
 
-.conversation { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .8rem; padding: .4rem 0 1rem; }
+.conversation { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: .8rem; padding: .4rem 0 1rem; }
 .empty-hint { margin: auto; max-width: 18em; color: rgba(255,255,255,.55); text-align: center; line-height: 1.6; }
 
 .entry { max-width: 88%; padding: .85rem 1rem; border-radius: 16px; background: rgba(15,23,42,.55); transition: opacity .2s; }
