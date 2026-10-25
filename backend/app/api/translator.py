@@ -69,10 +69,14 @@ _LANGUAGE_ALIASES = {
 }
 
 
+_MALAY_INDONESIAN = {"ms", "id"}
+
+
 def _normalize_lang(code: Optional[str]) -> str:
     if not code:
         return ""
-    value = code.strip().lower().replace("_", "-")
+    # Whisper 回傳的是語言名稱，有的帶括號，例如 "Malay (macrolanguage)"
+    value = re.sub(r"\s*\(.*\)$", "", code.strip().lower()).replace("_", "-")
     if value in _LANGUAGE_ALIASES:
         return _LANGUAGE_ALIASES[value]
     return value.split("-", 1)[0]
@@ -127,14 +131,17 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
     # current_user intentionally only verifies the existing JWT.  This endpoint
     # does not load a user, room, or database connection.
     _ = current_user
-    if not lang_a.strip() or not lang_b.strip():
+    # 每一邊可以多選（逗號分隔，例如 lang_a="zh-TW,en"、lang_b="ms"）：
+    # 講 A 邊任一種語言 → 翻成 B 邊的第一個；講 B 邊任一種 → 翻成 A 邊的第一個
+    side_a = [_selected_lang(c) for c in lang_a.split(",") if c.strip()]
+    side_b = [_selected_lang(c) for c in lang_b.split(",") if c.strip()]
+    if not side_a or not side_b:
         raise HTTPException(status_code=400, detail="lang_a and lang_b are required")
-
-    selected_a = _selected_lang(lang_a)
-    selected_b = _selected_lang(lang_b)
-    if not selected_a or not selected_b:
+    if not all(side_a + side_b):
         raise HTTPException(status_code=400, detail="Both languages must be valid language codes")
-    if _language_family(selected_a) == _language_family(selected_b):
+    families_a = {_language_family(c) for c in side_a}
+    families_b = {_language_family(c) for c in side_b}
+    if families_a & families_b:
         raise HTTPException(status_code=400, detail="lang_a and lang_b must be different languages")
 
     audio_data = await audio.read()
@@ -162,11 +169,17 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
     detected_raw = stt_result.get("language") or detect_language(transcript)
     detected_lang = _normalize_lang(detected_raw)
 
-    if _language_matches(detected_lang, selected_a):
-        source_lang, target_lang = selected_a, selected_b
-    elif _language_matches(detected_lang, selected_b):
-        source_lang, target_lang = selected_b, selected_a
-    else:
+    source_lang = target_lang = ""
+    for own, other in ((side_a, side_b), (side_b, side_a)):
+        match = next((c for c in own if _language_matches(detected_lang, c)), None)
+        if not match and detected_lang in _MALAY_INDONESIAN:
+            # Whisper 常把馬來文認成印尼文（反之亦然），只選了其中一種時視為同一種
+            match = next((c for c in own if _language_family(c) in _MALAY_INDONESIAN
+                          and not any(_language_matches(detected_lang, x) for x in side_a + side_b)), None)
+        if match:
+            source_lang, target_lang = match, other[0]
+            break
+    if not source_lang:
         # 展場旁邊的人講別的語言，或雜音被認成別的語言：安靜略過
         print(f"🔇 [Translator] 略過非選定語言 {detected_raw}: {transcript[:40]}")
         return _empty("other_lang")
