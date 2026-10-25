@@ -70,7 +70,9 @@ export const speechApi = {
         const error = JSON.parse(errorText)
         message = error.detail || message
       } catch {
-        if (errorText) message = errorText
+        // 不是 JSON（例如 Cloudflare 的錯誤網頁）就不要把整頁 HTML 顯示出來
+        if (errorText && !errorText.trimStart().startsWith('<')) message = errorText.slice(0, 200)
+        else if (response.status >= 500) message = '伺服器暫時連不上，請稍等幾秒再試'
       }
       throw Object.assign(new Error(message), { status: response.status })
     }
