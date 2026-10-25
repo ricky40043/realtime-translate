@@ -73,8 +73,10 @@ class FreeTranslateService:
         text: str,
         target_lang: str,
         source_lang: Optional[str] = None,
-        fast: bool = False
+        fast: bool = False,
+        model: Optional[str] = None,
     ) -> Dict:
+        """model：指定 Groq 模型（設定畫面選的）；沒指定就依 fast 用預設的大／小模型"""
         start = time.time()
         # STT providers sometimes return broad names or wrong language labels.
         # Let Google auto-detect source text for better cross-language speech results.
@@ -85,7 +87,7 @@ class FreeTranslateService:
         for provider in (self._groq_translate, self._google_translate):
             try:
                 translated, provider_name = await (
-                    provider(text, tgt, GROQ_FAST_TRANSLATE_MODEL if fast else GROQ_TRANSLATE_MODEL)
+                    provider(text, tgt, model or (GROQ_FAST_TRANSLATE_MODEL if fast else GROQ_TRANSLATE_MODEL))
                     if provider == self._groq_translate else provider(text, tgt)
                 )
                 latency_ms = int((time.time() - start) * 1000)

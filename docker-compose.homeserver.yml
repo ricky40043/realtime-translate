@@ -1,0 +1,43 @@
+# 家裡伺服器（Intel Core Ultra，內顯 + CPU，沒有獨立顯卡）專用：讓雲端網站也能選「本機」模型。
+# 在伺服器的 .env 加上：
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.homeserver.yml
+#   WHISPER_MODELS_DIR=/home/ricky/whisper-models          （放 ggml-large-v3-turbo-q8_0.bin）
+#   OLLAMA_MODELS_DIR=/usr/share/ollama/.ollama/models     （主機 Ollama 已下載的模型，唯讀共用）
+# 實測：語音辨識 turbo 用內顯一句約 2.5–3 秒；翻譯 qwen3.5:4b 約 2 秒、9b 約 3 秒、27b 約 5 秒（CPU）。
+# 一句講完到翻譯出來約 6–9 秒（雲端 Groq 約 1 秒）。
+services:
+  backend:
+    environment:
+      - LOCAL_STT_URL=http://whisper:8080
+      - LOCAL_STT_ENGINE=whispercpp
+      - LOCAL_STT_MODELS=large-v3-turbo
+      - LOCAL_LLM_URL=http://ollama:11434
+      # gpt-oss:20b 在這台一句要 27 秒，不列出來
+      - LOCAL_LLM_MODELS=qwen3.5:4b,qwen3.5:9b,gemma4:12b,qwen3.5:27b
+
+  # 語音辨識：whisper.cpp 用內顯（Vulkan）。-ac 768 只處理約 15 秒的音訊（每段最長約 8 秒），
+  # 比固定 30 秒快 3 倍；再小（640 以下）會辨識成亂碼或整句重複
+  whisper:
+    build:
+      context: ./local-ai
+      dockerfile: whisper-vulkan.Dockerfile
+    command: whisper-server -m /models/ggml-large-v3-turbo-q8_0.bin --host 0.0.0.0 --port 8080 -l auto -ac 768
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - ${WHISPER_MODELS_DIR:-./local-ai/whisper-models}:/models:ro
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # 翻譯：Ollama 用 CPU（內顯留給語音辨識，兩個同時跑才不會互搶），模型和主機的 Ollama 共用
+  ollama:
+    image: ollama/ollama:0.30.6
+    environment:
+      - OLLAMA_NOPRUNE=1
+      - OLLAMA_KEEP_ALIVE=30m
+    volumes:
+      - ${OLLAMA_MODELS_DIR:-./local-ai/ollama-models}:/root/.ollama/models:ro
+    networks:
+      - app-network
+    restart: unless-stopped

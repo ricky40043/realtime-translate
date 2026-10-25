@@ -16,7 +16,7 @@ class TranslationService:
         self.use_mock = self._should_use_mock()
     
     async def translate_text(self, text: str, target_lang: str, source_lang: Optional[str] = None,
-                             fast: bool = False) -> Dict:
+                             fast: bool = False, model: Optional[str] = None) -> Dict:
         """翻譯文字；fast=True 用較快的模型（只有 free 供應商支援）"""
         # 如果使用模擬模式，委託給模擬服務
         if self.use_mock:
@@ -28,7 +28,7 @@ class TranslationService:
         try:
             if self.provider == "free":
                 from .free_translate import free_translate_service
-                return await free_translate_service.translate_text(text, target_lang, source_lang, fast=fast)
+                return await free_translate_service.translate_text(text, target_lang, source_lang, fast=fast, model=model)
             elif self.provider == "google_v3":
                 from .google_translate_v3 import google_translate_v3_service
                 return await google_translate_v3_service.translate_text(text, target_lang, source_lang)

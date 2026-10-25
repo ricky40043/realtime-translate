@@ -12,6 +12,10 @@ from ..services.stt import stt_service
 from ..services.translate import detect_language, translation_service
 from ..services import groq_quota, local_ai
 from ..services.free_translate import GROQ_TRANSLATE_MODEL, _TARGET_NAMES
+
+# 設定畫面多列的 Groq 翻譯模型：每個模型的免費額度分開算，一個用完可以換另一個
+GROQ_EXTRA_TRANSLATE_MODELS = [m.strip() for m in os.getenv(
+    "GROQ_EXTRA_TRANSLATE_MODELS", "openai/gpt-oss-20b,qwen/qwen3.8-27b").split(",") if m.strip()]
 from .speech import filter_ai_default_responses
 from opencc import OpenCC
 
@@ -232,7 +236,7 @@ async def translate_audio(
     """stt_model / translate_model：空的或 "groq" 用雲端；"local:<模型>" / "ollama:<模型>" 用本機模型"""
     started = time.perf_counter()
     response = await _translate_audio(audio, lang_a, lang_b, is_final, current_user, stt_model, translate_model)
-    response.quota = groq_quota.cached()
+    response.quota = groq_quota.cached(_groq_stt_model(stt_model), _groq_translate_model(translate_model))
     # 伺服器處理花的時間：前端用「來回時間 − 這個」算出網路上傳速度，決定要不要壓縮
     response.server_ms = int((time.perf_counter() - started) * 1000)
     return response
@@ -276,16 +280,19 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
     if stt_model.startswith("local:"):
         if not local_ai.LOCAL_STT_URL:
             raise HTTPException(status_code=503, detail="本機語音辨識沒有啟動")
-        stt_result = await local_ai.transcribe(audio_data, audio.content_type or "audio/wav", stt_model[6:])
+        stt_result = await local_ai.transcribe(audio_data, audio.content_type or "audio/wav", stt_model[6:],
+                                               skip_if_busy=not is_final)
         if stt_result.get("error"):
             raise HTTPException(status_code=503, detail="本機語音辨識沒有回應，請確認本機模型服務有開著")
     else:
+        # "groq:<模型>"：設定畫面指定的 Groq 模型（每個模型的免費額度分開算）
+        chosen = stt_model[5:] if stt_model.startswith("groq:") else None
         stt_result = await stt_service.transcribe_audio(
             audio_data,
             audio.content_type or "audio/webm",
             None,
             None,
-            None if is_final else INTERIM_STT_MODEL,
+            chosen or (None if is_final else INTERIM_STT_MODEL),
         )
     if stt_result.get("rate_limited"):
         raise HTTPException(status_code=429, detail="Speech recognition rate limit reached")
@@ -383,6 +390,7 @@ async def _translate_part(text: str, source_lang: str, target_lang: str, is_fina
         target_lang,
         source_lang,
         fast=not is_final,
+        model=translate_model[5:] if translate_model.startswith("groq:") else None,
     )
     if translation.get("error"):
         raise HTTPException(status_code=502, detail="Translation service failed")
@@ -394,17 +402,28 @@ async def get_models(current_user: str = Depends(get_current_user)):
     """設定畫面可以選的語音辨識、翻譯模型：雲端 Groq + 這台電腦上裝好的本機模型"""
     _ = current_user
     cloud = bool(os.getenv("GROQ_API_KEY"))
-    stt = [{"id": "groq", "label": "雲端 Groq · Whisper large-v3", "available": cloud}]
-    stt += [{"id": f"local:{m}", "label": f"本機 · Whisper {m}", "available": True}
+    stt = [{"id": "groq", "label": "Groq Whisper large-v3（雲端）", "available": cloud},
+           {"id": "groq:whisper-large-v3-turbo", "label": "Groq Whisper turbo（雲端・較快）", "available": cloud}]
+    stt += [{"id": f"local:{m}", "label": f"Whisper {m}（本機）", "available": True}
             for m in await local_ai.list_stt_models()]
-    translate = [{"id": "groq", "label": f"雲端 Groq · {GROQ_TRANSLATE_MODEL.split('/')[-1]}", "available": cloud}]
-    translate += [{"id": f"ollama:{m}", "label": f"本機 · {m}", "available": True}
+    translate = [{"id": "groq", "label": f"Groq {GROQ_TRANSLATE_MODEL.split('/')[-1]}（雲端）", "available": cloud}]
+    translate += [{"id": f"groq:{m}", "label": f"Groq {m.split('/')[-1]}（雲端）", "available": cloud}
+                  for m in GROQ_EXTRA_TRANSLATE_MODELS]
+    translate += [{"id": f"ollama:{m}", "label": f"{m}（本機）", "available": True}
                   for m in await local_ai.list_llm_models()]
     return {"stt": stt, "translate": translate}
 
 
+def _groq_stt_model(choice: str) -> Optional[str]:
+    return choice[5:] if choice.startswith("groq:") else None
+
+
+def _groq_translate_model(choice: str) -> Optional[str]:
+    return choice[5:] if choice.startswith("groq:") else None
+
+
 @router.get("/quota")
-async def get_quota(current_user: str = Depends(get_current_user)):
-    """Groq 今天剩餘的呼叫次數（語音辨識、翻譯），翻譯機右上角顯示用"""
+async def get_quota(stt_model: str = "", translate_model: str = "", current_user: str = Depends(get_current_user)):
+    """Groq 今天剩餘的呼叫次數（語音辨識、翻譯），翻譯機右上角顯示用；顯示正在用的模型"""
     _ = current_user
-    return await groq_quota.snapshot()
+    return await groq_quota.snapshot(_groq_stt_model(stt_model), _groq_translate_model(translate_model))

@@ -66,17 +66,18 @@ async def _probe(model: str) -> None:
     record(model, resp.headers)
 
 
-def cached() -> Dict[str, Optional[Dict]]:
-    """只回傳已記下的數字，不打 API（每次翻譯回應都附上）"""
-    return {"speech": _quota.get(SPEECH_MODEL), "translate": _quota.get(TRANSLATE_MODEL)}
+def cached(speech: Optional[str] = None, translate: Optional[str] = None) -> Dict[str, Optional[Dict]]:
+    """只回傳已記下的數字，不打 API（每次翻譯回應都附上）。每個模型的額度分開算，顯示正在用的那個"""
+    return {"speech": _quota.get(speech or SPEECH_MODEL), "translate": _quota.get(translate or TRANSLATE_MODEL)}
 
 
-async def snapshot() -> Dict[str, Optional[Dict]]:
+async def snapshot(speech: Optional[str] = None, translate: Optional[str] = None) -> Dict[str, Optional[Dict]]:
+    speech, translate = speech or SPEECH_MODEL, translate or TRANSLATE_MODEL
     async with _probe_lock:
-        for model in (SPEECH_MODEL, TRANSLATE_MODEL):
+        for model in (speech, translate):
             if model not in _quota:
                 try:
                     await _probe(model)
                 except Exception as e:
                     print(f"⚠️ 查詢 Groq 額度失敗 {model}: {e}")
-    return {"speech": _quota.get(SPEECH_MODEL), "translate": _quota.get(TRANSLATE_MODEL)}
+    return cached(speech, translate)
