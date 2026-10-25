@@ -72,7 +72,7 @@ export const speechApi = {
    */
   async quota(): Promise<{ speech: QuotaInfo | null; translate: QuotaInfo | null }> {
     const response = await fetch(`${API_BASE}/translator/quota`, { headers: getAuthHeaders() })
-    if (!response.ok) throw new Error('quota unavailable')
+    if (!response.ok) throw Object.assign(new Error('quota unavailable'), { status: response.status })
     return response.json()
   },
 

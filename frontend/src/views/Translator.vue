@@ -20,9 +20,11 @@
         <span>語言 {{ side.key }}<small v-if="sideIndex === 0">每邊可多選；講這邊任一種語言，都翻成另一邊的「主要」語言（第一個）</small></span>
         <div class="lang-chips">
           <span v-for="(code, index) in side.list.value" :key="code" class="lang-chip" :class="{ primary: index === 0 }">
-            <button type="button" class="chip-name" :title="index === 0 ? '主要語言' : '設為主要語言'" @click="makePrimary(side.list, code)">
-              {{ languageName(code) }}<em v-if="index === 0 && side.list.value.length > 1">主要</em>
-            </button>
+            <select class="chip-select" :value="code" :aria-label="`語言 ${side.key} 第 ${index + 1} 個`" @change="replaceLang(side.list, code, $event)">
+              <option v-for="language in optionsFor(side.list.value, code)" :key="language.code" :value="language.code">{{ language.name }}</option>
+            </select>
+            <em v-if="index === 0 && side.list.value.length > 1" class="primary-tag">主要</em>
+            <button v-else-if="index > 0" type="button" class="make-primary" @click="makePrimary(side.list, code)">設為主要</button>
             <button v-if="side.list.value.length > 1" type="button" class="chip-remove" :aria-label="`移除${languageName(code)}`" @click="removeLang(side.list, code)">×</button>
           </span>
           <select class="add-lang" :value="''" @change="addLang(side.list, $event)">
@@ -202,7 +204,37 @@ const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(
 
 onMounted(async () => {
   sessionStore.loadAuth()
-  if (!sessionStore.isAuthenticated) {
+  if (!sessionStore.isAuthenticated && !(await guestLogin())) return
+  authReady.value = true
+  refreshQuota()
+  quotaTimer = window.setInterval(refreshQuota, 60_000)
+})
+
+onBeforeUnmount(() => {
+  stopRecording()
+  if (quotaTimer !== null) window.clearInterval(quotaTimer)
+})
+
+async function refreshQuota() {
+  try { quota.value = await speechApi.quota() } catch (error: any) {
+    // 查不到就維持上一次的數字；憑證過期就重新登入
+    if (error?.status === 401 && await guestLogin()) quota.value = await speechApi.quota().catch(() => quota.value)
+  }
+}
+
+// 每次翻譯的回應都帶著最新剩餘次數，直接更新；沒在講話時靠每分鐘查一次
+function applyQuota(result: TranslatorResponse) {
+  if (result.quota?.speech || result.quota?.translate) quota.value = result.quota
+}
+
+function quotaText(info: QuotaInfo | null): string {
+  return info ? info.remaining.toLocaleString() : '—'
+}
+
+// 用訪客身分登入；登入憑證過期（7 天）時也用這個重新拿一張
+let loginPromise: Promise<boolean> | null = null
+function guestLogin(): Promise<boolean> {
+  loginPromise ??= (async () => {
     try {
       const response = await authApi.guestLogin(
         `用戶_${Math.random().toString(36).slice(2, 8)}`,
@@ -217,32 +249,16 @@ onMounted(async () => {
         inputLang: response.input_lang,
         outputLang: response.output_lang,
       }, response.token)
+      errorMessage.value = ''
+      return true
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : '登入失敗，無法使用翻譯功能'
-      return
+      return false
+    } finally {
+      loginPromise = null
     }
-  }
-  authReady.value = true
-  refreshQuota()
-  quotaTimer = window.setInterval(refreshQuota, 60_000)
-})
-
-onBeforeUnmount(() => {
-  stopRecording()
-  if (quotaTimer !== null) window.clearInterval(quotaTimer)
-})
-
-async function refreshQuota() {
-  try { quota.value = await speechApi.quota() } catch { /* 查不到就維持上一次的數字 */ }
-}
-
-// 每次翻譯的回應都帶著最新剩餘次數，直接更新；沒在講話時靠每分鐘查一次
-function applyQuota(result: TranslatorResponse) {
-  if (result.quota?.speech || result.quota?.translate) quota.value = result.quota
-}
-
-function quotaText(info: QuotaInfo | null): string {
-  return info ? info.remaining.toLocaleString() : '—'
+  })()
+  return loginPromise
 }
 
 function loadLangs(key: string, fallback: string[]): string[] {
@@ -269,6 +285,16 @@ function addLang(list: Ref<string[]>, event: Event) {
   const select = event.target as HTMLSelectElement
   if (select.value && !list.value.includes(select.value)) list.value = [...list.value, select.value]
   select.value = ''
+}
+
+// 每個語言都可以直接點開換成別的（選單裡不列同一邊已經選的）
+function optionsFor(list: string[], current: string) {
+  return languages.filter(language => language.code === current || !list.includes(language.code))
+}
+
+function replaceLang(list: Ref<string[]>, code: string, event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  list.value = list.value.map(c => (c === code ? value : c))
 }
 
 function removeLang(list: Ref<string[]>, code: string) {
@@ -502,6 +528,7 @@ function maybeSendInterim() {
     })
     .catch((error: any) => {
       // 免費額度每分鐘次數有限：被擋就放慢預覽，定稿仍會照常送
+      if (error?.status === 401) guestLogin()
       if (error?.status === 429) {
         interimInterval = Math.min(MAX_INTERVAL, interimInterval * 1.5)
         slowMode.value = interimInterval > 2
@@ -556,6 +583,9 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     pruneEntry(ownerOf(target, owner))
     scrollToBottom()
   } catch (error: any) {
+    if (error?.status === 401 && attempt < 1 && await guestLogin()) {
+      return submitFinal(wav, levels, owner, target, attempt + 1)
+    }
     if (error?.status === 429 && attempt < 4) {
       await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)))
       return submitFinal(wav, levels, owner, target, attempt + 1)
@@ -720,9 +750,10 @@ select { width: 100%; min-height: 44px; padding: .55rem .7rem; border: 1px solid
 .lang-chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
 .lang-chip { display: inline-flex; align-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: #252145; }
 .lang-chip.primary { border-color: #a78bfa; background: rgba(167,139,250,.22); }
-.chip-name { display: inline-flex; gap: .35rem; align-items: center; min-height: 38px; padding: 0 .4rem 0 .8rem; border: 0; background: none; color: #fff; font-size: .95rem; }
-.lang-chip:not(:has(.chip-remove)) .chip-name { padding-right: .8rem; }
-.chip-name em { font-style: normal; font-size: .68rem; padding: .05rem .35rem; border-radius: 6px; background: #a78bfa; color: #1e1b4b; }
+select.chip-select { width: auto; min-height: 38px; padding: 0 .2rem 0 .8rem; border: 0; border-radius: 999px; background: transparent; font-size: .95rem; }
+.primary-tag { font-style: normal; font-size: .68rem; padding: .05rem .35rem; margin-right: .3rem; border-radius: 6px; background: #a78bfa; color: #1e1b4b; }
+.make-primary { min-height: 38px; padding: 0 .3rem; border: 0; background: none; color: #c4b5fd; font-size: .72rem; }
+.lang-chip:not(:has(.chip-remove)) { padding-right: .4rem; }
 .chip-remove { min-width: 32px; min-height: 38px; border: 0; background: none; color: rgba(255,255,255,.6); font-size: 1.1rem; }
 select.add-lang { width: auto; min-height: 38px; padding: 0 .6rem; border-style: dashed; border-radius: 999px; font-size: .9rem; }
 .field-error { grid-column: 1 / -1; margin: 0; color: #fda4af; font-size: .9rem; text-align: center; }
