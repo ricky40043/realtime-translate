@@ -109,3 +109,8 @@ Desktop.ini
 dist/
 build/
 _env
+
+# 本機模型
+local-ai/.venv/
+local-ai/logs/
+local-ai/手機憑證.crt

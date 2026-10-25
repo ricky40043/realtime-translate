@@ -1,0 +1,30 @@
+# 自己的電腦（Mac / Windows）跑翻譯機用：和 docker-compose.yml 一起使用
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+# 一般由 local-ai/install-mac.sh、local-ai/install-windows.ps1 自動執行。
+services:
+  backend:
+    environment:
+      # 本機模型跑在電腦本身（才用得到 Mac / NVIDIA 的 GPU），容器透過 host.docker.internal 連過去
+      - LOCAL_STT_URL=http://host.docker.internal:9000
+      - LOCAL_LLM_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # 手機連這台電腦時要 HTTPS 才能用麥克風：https://<電腦 IP>:3443
+  https:
+    image: caddy:2.10.2
+    depends_on:
+      - nginx
+    ports:
+      - "3443:443"
+    environment:
+      - LAN_IP=${LAN_IP:-127.0.0.1}
+    volumes:
+      - ./local-ai/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    networks:
+      - app-network
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

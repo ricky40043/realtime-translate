@@ -34,6 +34,21 @@
         </div>
       </div>
       </template>
+      <div class="model-fields">
+        <label class="model-field">
+          <span>語音辨識</span>
+          <select v-model="sttModel">
+            <option v-for="m in modelOptions.stt" :key="m.id" :value="m.id" :disabled="!m.available">{{ m.label }}{{ m.available ? '' : '（未設定）' }}</option>
+          </select>
+        </label>
+        <label class="model-field">
+          <span>翻譯模型</span>
+          <select v-model="translateModel">
+            <option v-for="m in modelOptions.translate" :key="m.id" :value="m.id" :disabled="!m.available">{{ m.label }}{{ m.available ? '' : '（未設定）' }}</option>
+          </select>
+        </label>
+        <small v-if="isLocal">本機模型不需要網路；第一次使用要等模型載入（約 10–30 秒）。</small>
+      </div>
       <p v-if="sameLanguage" class="field-error">A、B 兩邊不能有同一種語言（{{ overlapName }}）。</p>
     </div>
 
@@ -84,7 +99,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { Mp3Encoder } from '@breezystack/lamejs'
 import { authApi } from '../api/http'
-import { speechApi, type QuotaInfo, type TranslatorResponse } from '../api/speech'
+import { speechApi, type ModelOption, type QuotaInfo, type TranslatorResponse } from '../api/speech'
 import { useSessionStore } from '../stores/session'
 
 const languages = [
@@ -154,6 +169,14 @@ const sessionStore = useSessionStore()
 const langA = ref<string[]>(loadLangs('translatorLangA', ['zh-TW']))
 const langB = ref<string[]>(loadLangs('translatorLangB', ['en']))
 const sides = [{ key: 'A', list: langA }, { key: 'B', list: langB }]
+// 模型：groq = 雲端；local:… / ollama:… = 這台電腦上的本機模型（不需要網路）
+const modelOptions = ref<{ stt: ModelOption[]; translate: ModelOption[] }>({
+  stt: [{ id: 'groq', label: '雲端 Groq · Whisper', available: true }],
+  translate: [{ id: 'groq', label: '雲端 Groq', available: true }],
+})
+const sttModel = ref(loadSetting('translatorSttModel', 'groq'))
+const translateModel = ref(loadSetting('translatorTranslateModel', 'groq'))
+const isLocal = computed(() => sttModel.value !== 'groq' || translateModel.value !== 'groq')
 const settingsOpen = ref(true)
 const authReady = ref(false)
 const isRecording = ref(false)
@@ -204,12 +227,15 @@ const overlapName = computed(() => languageName(overlap.value))
 const sameLanguage = computed(() => !!overlap.value)
 watch(langA, v => saveLangs('translatorLangA', v), { deep: true })
 watch(langB, v => saveLangs('translatorLangB', v), { deep: true })
+watch(sttModel, v => saveSetting('translatorSttModel', v))
+watch(translateModel, v => saveSetting('translatorTranslateModel', v))
 const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(e)))
 
 onMounted(async () => {
   sessionStore.loadAuth()
   if (!sessionStore.isAuthenticated && !(await guestLogin())) return
   authReady.value = true
+  loadModels()
   refreshQuota()
   quotaTimer = window.setInterval(refreshQuota, 60_000)
 })
@@ -263,6 +289,33 @@ function guestLogin(): Promise<boolean> {
     }
   })()
   return loginPromise
+}
+
+async function loadModels() {
+  try {
+    const options = await speechApi.models()
+    modelOptions.value = options
+    // 記住的模型不在了（換電腦、模型刪掉）或雲端沒設定：改用第一個能用的
+    const pick = (list: ModelOption[], current: string) =>
+      list.find(m => m.id === current && m.available)?.id || list.find(m => m.available)?.id || current
+    sttModel.value = pick(options.stt, sttModel.value)
+    translateModel.value = pick(options.translate, translateModel.value)
+  } catch { /* 讀不到就維持雲端 */ }
+}
+
+function modelChoice() {
+  return {
+    sttModel: sttModel.value === 'groq' ? '' : sttModel.value,
+    translateModel: translateModel.value === 'groq' ? '' : translateModel.value,
+  }
+}
+
+function loadSetting(key: string, fallback: string): string {
+  try { return localStorage.getItem(key) || fallback } catch { return fallback }
+}
+
+function saveSetting(key: string, value: string) {
+  try { localStorage.setItem(key, value) } catch { /* 存不了也沒關係 */ }
 }
 
 function loadLangs(key: string, fallback: string[]): string[] {
@@ -522,12 +575,15 @@ function maybeSendInterim() {
     .then(result => {
       applyQuota(result)
       interimInterval = Math.max(MIN_INTERVAL, interimInterval * 0.9)
+      // 本機模型比較慢（沒有顯卡時一句要好幾秒）：預覽間隔跟著拉長，不要把定稿卡在後面排隊
+      if ((result.server_ms ?? 0) > 1000) interimInterval = Math.min(8, Math.max(interimInterval, (result.server_ms! / 1000) * 1.5))
       slowMode.value = interimInterval > 2
       if (target.final || seq < target.interimSeq || result.status !== 'ok' || !result.transcript) return
       target.interimSeq = seq
       lastActivityAt = performance.now() / 1000
       target.transcript = result.transcript
-      target.translation = result.translated_text
+      // 本機模型忙的時候預覽只有原文、沒有翻譯：保留上一次的翻譯
+      target.translation = result.translated_text || target.translation
       placePiece(owner, target, result)
       scrollToBottom()
     })
@@ -723,7 +779,7 @@ function encodeWav(segment: Block[]): Blob {
 // 送出並計時：來回時間扣掉伺服器處理時間和固定延遲，剩下的就是上傳花的時間
 async function timedTranslate(blob: Blob, isFinal: boolean): Promise<TranslatorResponse> {
   const started = performance.now()
-  const result = await speechApi.translate(blob, langA.value.join(','), langB.value.join(','), { isFinal })
+  const result = await speechApi.translate(blob, langA.value.join(','), langB.value.join(','), { isFinal, ...modelChoice() })
   const transferMs = performance.now() - started - (result.server_ms ?? 0) - baseLatencyMs
   if (result.server_ms != null && blob.size > 8000) updateUploadSpeed(blob.size, transferMs)
   return result
@@ -816,8 +872,11 @@ function languageName(code: string): string {
 
 <style scoped>
 .translator-page {
-  height: 100vh;
-  height: 100dvh;
+  /* 釘在畫面上：手機在按鈕附近往上滑時，整頁不會被推上去、露出底下的白色 */
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
   display: flex;
   flex-direction: column;
   padding: .75rem max(1rem, calc((100% - 720px) / 2)) 0;
@@ -832,7 +891,7 @@ h1 { margin: 0; font-size: 1.15rem; white-space: nowrap; }
 .pair-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pair-chip { max-width: min(62vw, 420px); display: flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(255,255,255,.08); color: #fff; font-size: .9rem; }
 
-.settings-panel { display: grid; grid-template-columns: 1fr; gap: .6rem; align-items: end; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }
+.settings-panel { max-height: 60%; overflow-y: auto; overscroll-behavior: contain; flex-shrink: 0; display: grid; grid-template-columns: 1fr; gap: .6rem; align-items: end; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }
 .language-field { display: flex; flex-direction: column; gap: .35rem; font-size: .85rem; font-weight: 600; }
 select { width: 100%; min-height: 44px; padding: .55rem .7rem; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; background: #252145; color: #fff; font-size: 1rem; }
 .swap-button { justify-self: center; transform: rotate(90deg); min-height: 44px; padding: 0 .8rem; border: 0; border-radius: 10px; background: rgba(196,181,253,.15); color: #c4b5fd; font-size: 1.3rem; }
@@ -846,9 +905,14 @@ select.chip-select { width: auto; min-height: 38px; padding: 0 .2rem 0 .8rem; bo
 .lang-chip:not(:has(.chip-remove)) { padding-right: .4rem; }
 .chip-remove { min-width: 32px; min-height: 38px; border: 0; background: none; color: rgba(255,255,255,.6); font-size: 1.1rem; }
 select.add-lang { width: auto; min-height: 38px; padding: 0 .6rem; border-style: dashed; border-radius: 999px; font-size: .9rem; }
+.model-fields { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; padding-top: .4rem; border-top: 1px solid rgba(255,255,255,.1); }
+.model-field { display: flex; flex-direction: column; gap: .35rem; font-size: .85rem; font-weight: 600; min-width: 0; }
+.model-field select { font-size: .9rem; }
+.model-fields small { grid-column: 1 / -1; font-size: .72rem; opacity: .65; }
+@media (max-width: 480px) { .model-fields { grid-template-columns: 1fr; } }
 .field-error { grid-column: 1 / -1; margin: 0; color: #fda4af; font-size: .9rem; text-align: center; }
 
-.conversation { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .8rem; padding: .4rem 0 1rem; }
+.conversation { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: .8rem; padding: .4rem 0 1rem; }
 .empty-hint { margin: auto; max-width: 18em; color: rgba(255,255,255,.55); text-align: center; line-height: 1.6; }
 
 .entry { max-width: 88%; padding: .85rem 1rem; border-radius: 16px; background: rgba(15,23,42,.55); transition: opacity .2s; }

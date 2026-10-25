@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 import time
 from typing import List, Optional
@@ -9,7 +10,8 @@ from pydantic import BaseModel
 from ..deps import get_current_user
 from ..services.stt import stt_service
 from ..services.translate import detect_language, translation_service
-from ..services import groq_quota
+from ..services import groq_quota, local_ai
+from ..services.free_translate import GROQ_TRANSLATE_MODEL, _TARGET_NAMES
 from .speech import filter_ai_default_responses
 from opencc import OpenCC
 
@@ -223,10 +225,13 @@ async def translate_audio(
     lang_a: str = Form(...),
     lang_b: str = Form(...),
     is_final: bool = Form(True),
+    stt_model: str = Form(""),
+    translate_model: str = Form(""),
     current_user: str = Depends(get_current_user),
 ):
+    """stt_model / translate_model：空的或 "groq" 用雲端；"local:<模型>" / "ollama:<模型>" 用本機模型"""
     started = time.perf_counter()
-    response = await _translate_audio(audio, lang_a, lang_b, is_final, current_user)
+    response = await _translate_audio(audio, lang_a, lang_b, is_final, current_user, stt_model, translate_model)
     response.quota = groq_quota.cached()
     # 伺服器處理花的時間：前端用「來回時間 − 這個」算出網路上傳速度，決定要不要壓縮
     response.server_ms = int((time.perf_counter() - started) * 1000)
@@ -241,7 +246,8 @@ async def ping(request: Request, current_user: str = Depends(get_current_user)):
     return {"bytes": len(body)}
 
 
-async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final: bool, current_user: str) -> TranslatorResponse:
+async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final: bool, current_user: str,
+                           stt_model: str = "", translate_model: str = "") -> TranslatorResponse:
     """Transcribe one recording and translate it between the two selected languages.
 
     is_final=False 是講話中的即時預覽：用較快的模型，結果之後會被定稿取代。
@@ -267,13 +273,20 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
         return _empty()
 
     # 語言傳 None：讓 Whisper 自己判斷是兩種語言的哪一種（指定語言會把另一種語言硬翻過去）
-    stt_result = await stt_service.transcribe_audio(
-        audio_data,
-        audio.content_type or "audio/webm",
-        None,
-        None,
-        None if is_final else INTERIM_STT_MODEL,
-    )
+    if stt_model.startswith("local:"):
+        if not local_ai.LOCAL_STT_URL:
+            raise HTTPException(status_code=503, detail="本機語音辨識沒有啟動")
+        stt_result = await local_ai.transcribe(audio_data, audio.content_type or "audio/wav", stt_model[6:])
+        if stt_result.get("error"):
+            raise HTTPException(status_code=503, detail="本機語音辨識沒有回應，請確認本機模型服務有開著")
+    else:
+        stt_result = await stt_service.transcribe_audio(
+            audio_data,
+            audio.content_type or "audio/webm",
+            None,
+            None,
+            None if is_final else INTERIM_STT_MODEL,
+        )
     if stt_result.get("rate_limited"):
         raise HTTPException(status_code=429, detail="Speech recognition rate limit reached")
 
@@ -296,7 +309,7 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
         for text, side in parts:
             own, other = sides[side], sides[1 - side]
             jobs.append((_pick_source(own, text, detected_lang), other[0], text))
-        done = await asyncio.gather(*[_translate_part(t, src, tgt, is_final) for src, tgt, t in jobs])
+        done = await asyncio.gather(*[_translate_part(t, src, tgt, is_final, translate_model) for src, tgt, t in jobs])
         segments = [
             TranslatorSegment(transcript=tr, translated_text=tx, source_lang=src, target_lang=tgt)
             for (src, tgt, _), (tr, tx) in zip(jobs, done)
@@ -334,7 +347,7 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
         print(f"🔇 [Translator] 略過非選定語言 {detected_raw}: {transcript[:40]}")
         return _empty("other_lang")
 
-    transcript, translated = await _translate_part(transcript, source_lang, target_lang, is_final)
+    transcript, translated = await _translate_part(transcript, source_lang, target_lang, is_final, translate_model)
     return TranslatorResponse(
         transcript=transcript,
         translated_text=translated,
@@ -351,10 +364,19 @@ def _pick_source(own: list, text: str, detected_lang: str) -> str:
         own, key=lambda c: len(_SCRIPT_PATTERNS[_script_of(c)].findall(text)))
 
 
-async def _translate_part(text: str, source_lang: str, target_lang: str, is_final: bool):
+async def _translate_part(text: str, source_lang: str, target_lang: str, is_final: bool, translate_model: str = ""):
     if _language_family(source_lang) == "zh":
         converter = _TO_TRADITIONAL if source_lang == "zh-TW" else _TO_SIMPLIFIED
         text = _ZH_PUNCT.sub(lambda m: _ZH_PUNCT_MAP[m.group(1)], converter.convert(text))
+
+    if translate_model.startswith("ollama:"):
+        if not local_ai.LOCAL_LLM_URL:
+            raise HTTPException(status_code=503, detail="本機翻譯模型沒有啟動")
+        translation = await local_ai.translate(text, _TARGET_NAMES.get(target_lang, target_lang), translate_model[7:],
+                                            skip_if_busy=not is_final)
+        if translation.get("error"):
+            raise HTTPException(status_code=503, detail="本機翻譯模型沒有回應，請確認 Ollama 有開著")
+        return text, translation.get("text") or ""
 
     translation = await translation_service.translate_text(
         text,
@@ -365,6 +387,20 @@ async def _translate_part(text: str, source_lang: str, target_lang: str, is_fina
     if translation.get("error"):
         raise HTTPException(status_code=502, detail="Translation service failed")
     return text, translation.get("text") or ""
+
+
+@router.get("/models")
+async def get_models(current_user: str = Depends(get_current_user)):
+    """設定畫面可以選的語音辨識、翻譯模型：雲端 Groq + 這台電腦上裝好的本機模型"""
+    _ = current_user
+    cloud = bool(os.getenv("GROQ_API_KEY"))
+    stt = [{"id": "groq", "label": "雲端 Groq · Whisper large-v3", "available": cloud}]
+    stt += [{"id": f"local:{m}", "label": f"本機 · Whisper {m}", "available": True}
+            for m in await local_ai.list_stt_models()]
+    translate = [{"id": "groq", "label": f"雲端 Groq · {GROQ_TRANSLATE_MODEL.split('/')[-1]}", "available": cloud}]
+    translate += [{"id": f"ollama:{m}", "label": f"本機 · {m}", "available": True}
+                  for m in await local_ai.list_llm_models()]
+    return {"stt": stt, "translate": translate}
 
 
 @router.get("/quota")
