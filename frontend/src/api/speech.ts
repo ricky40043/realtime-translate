@@ -105,8 +105,9 @@ export const speechApi = {
   /**
    * Groq 今天剩餘的呼叫次數（語音辨識、翻譯）
    */
-  async quota(): Promise<{ speech: QuotaInfo | null; translate: QuotaInfo | null }> {
-    const response = await fetch(`${API_BASE}/translator/quota`, { headers: getAuthHeaders() })
+  async quota(models: { sttModel?: string; translateModel?: string } = {}): Promise<{ speech: QuotaInfo | null; translate: QuotaInfo | null }> {
+    const query = new URLSearchParams({ stt_model: models.sttModel || '', translate_model: models.translateModel || '' })
+    const response = await fetch(`${API_BASE}/translator/quota?${query}`, { headers: getAuthHeaders() })
     if (!response.ok) throw Object.assign(new Error('quota unavailable'), { status: response.status })
     return response.json()
   },

@@ -171,8 +171,8 @@ const langB = ref<string[]>(loadLangs('translatorLangB', ['en']))
 const sides = [{ key: 'A', list: langA }, { key: 'B', list: langB }]
 // 模型：groq = 雲端；local:… / ollama:… = 這台電腦上的本機模型（不需要網路）
 const modelOptions = ref<{ stt: ModelOption[]; translate: ModelOption[] }>({
-  stt: [{ id: 'groq', label: '雲端 Groq · Whisper', available: true }],
-  translate: [{ id: 'groq', label: '雲端 Groq', available: true }],
+  stt: [{ id: 'groq', label: 'Groq Whisper（雲端）', available: true }],
+  translate: [{ id: 'groq', label: 'Groq（雲端）', available: true }],
 })
 const sttModel = ref(loadSetting('translatorSttModel', 'groq'))
 const translateModel = ref(loadSetting('translatorTranslateModel', 'groq'))
@@ -229,6 +229,7 @@ watch(langA, v => saveLangs('translatorLangA', v), { deep: true })
 watch(langB, v => saveLangs('translatorLangB', v), { deep: true })
 watch(sttModel, v => saveSetting('translatorSttModel', v))
 watch(translateModel, v => saveSetting('translatorTranslateModel', v))
+watch([sttModel, translateModel], () => { if (authReady.value) refreshQuota() })  // 換模型就顯示那個模型的剩餘次數
 const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(e)))
 
 onMounted(async () => {
@@ -246,9 +247,9 @@ onBeforeUnmount(() => {
 })
 
 async function refreshQuota() {
-  try { quota.value = await speechApi.quota() } catch (error: any) {
+  try { quota.value = await speechApi.quota(modelChoice()) } catch (error: any) {
     // 查不到就維持上一次的數字；憑證過期就重新登入
-    if (error?.status === 401 && await guestLogin()) quota.value = await speechApi.quota().catch(() => quota.value)
+    if (error?.status === 401 && await guestLogin()) quota.value = await speechApi.quota(modelChoice()).catch(() => quota.value)
   }
 }
 

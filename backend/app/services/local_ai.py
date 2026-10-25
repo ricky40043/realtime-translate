@@ -15,6 +15,12 @@ import httpx
 
 LOCAL_STT_URL = os.getenv("LOCAL_STT_URL", "").rstrip("/")
 LOCAL_LLM_URL = os.getenv("LOCAL_LLM_URL", "").rstrip("/")
+# 語音辨識服務的種類：openai = local-ai/stt_server.py；whispercpp = whisper.cpp 的 whisper-server（用內顯加速）
+LOCAL_STT_ENGINE = os.getenv("LOCAL_STT_ENGINE", "openai")
+# whisper-server 一次只載入一個模型，名稱由這裡告訴設定畫面
+LOCAL_STT_MODELS = [m.strip() for m in os.getenv("LOCAL_STT_MODELS", "").split(",") if m.strip()]
+# 只列出這些翻譯模型（逗號分隔；空的 = Ollama 裡全部）。太慢的模型不要放進來
+LOCAL_LLM_MODELS = [m.strip() for m in os.getenv("LOCAL_LLM_MODELS", "").split(",") if m.strip()]
 
 # 實測：靜音約 0.7、正常說話約 0.02（和 Groq 那邊一樣的判斷）
 NO_SPEECH_THRESHOLD = 0.5
@@ -51,6 +57,12 @@ async def _cached(key: str, loader) -> List[str]:
 async def list_stt_models() -> List[str]:
     if not LOCAL_STT_URL:
         return []
+    if LOCAL_STT_ENGINE == "whispercpp":
+        async def ping():
+            resp = await _http().get(f"{LOCAL_STT_URL}/", timeout=3.0)
+            resp.raise_for_status()
+            return LOCAL_STT_MODELS or ["whisper"]
+        return await _cached("stt", ping)
 
     async def load():
         resp = await _http().get(f"{LOCAL_STT_URL}/v1/models", timeout=3.0)
@@ -68,20 +80,39 @@ async def list_llm_models() -> List[str]:
         resp = await _http().get(f"{LOCAL_LLM_URL}/api/tags", timeout=3.0)
         resp.raise_for_status()
         names = [m["name"] for m in resp.json().get("models", [])]
+        if LOCAL_LLM_MODELS:
+            return [n for n in LOCAL_LLM_MODELS if n in names]
         return sorted(n for n in names if not any(k in n.lower() for k in _NON_CHAT))
 
     return await _cached("llm", load)
 
 
-async def transcribe(audio_data: bytes, content_type: str, model: str) -> Dict:
-    """回傳格式和 groq_stt 一樣：text / language / no_speech_prob"""
-    suffix = ".mp3" if "mpeg" in content_type or "mp3" in content_type else ".wav"
+_stt_busy = 0  # 正在跑的本機語音辨識數
+
+
+async def transcribe(audio_data: bytes, content_type: str, model: str, skip_if_busy: bool = False) -> Dict:
+    """回傳格式和 groq_stt 一樣：text / language / no_speech_prob。
+    skip_if_busy：講話中的即時預覽在辨識忙的時候先跳過，讓一句講完的定稿不用排隊"""
+    global _stt_busy
+    if skip_if_busy and _stt_busy:
+        return {"text": "", "language": "", "no_speech_prob": 0.0, "skipped": True}
+    _stt_busy += 1
     try:
-        resp = await _http().post(
-            f"{LOCAL_STT_URL}/v1/audio/transcriptions",
-            files={"file": (f"audio{suffix}", audio_data, content_type)},
-            data={"model": model, "response_format": "verbose_json"},
-        )
+        return await _transcribe(audio_data, content_type, model)
+    finally:
+        _stt_busy -= 1
+
+
+async def _transcribe(audio_data: bytes, content_type: str, model: str) -> Dict:
+    suffix = ".mp3" if "mpeg" in content_type or "mp3" in content_type else ".wav"
+    if LOCAL_STT_ENGINE == "whispercpp":
+        url = f"{LOCAL_STT_URL}/inference"
+        form = {"response_format": "verbose_json", "temperature": "0"}
+    else:
+        url = f"{LOCAL_STT_URL}/v1/audio/transcriptions"
+        form = {"model": model, "response_format": "verbose_json"}
+    try:
+        resp = await _http().post(url, files={"file": (f"audio{suffix}", audio_data, content_type)}, data=form)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -94,8 +125,9 @@ async def transcribe(audio_data: bytes, content_type: str, model: str) -> Dict:
     kept = [s for s in segments
             if s.get("no_speech_prob", 0.0) < NO_SPEECH_THRESHOLD
             and s.get("compression_ratio", 0.0) < MAX_COMPRESSION_RATIO]
-    if segments and len(kept) != len(segments):
-        text = "".join(s.get("text", "") for s in kept)
+    if segments:
+        # whisper.cpp 每段之間會加換行；用段落重新接起來（也順便拿掉疑似幻覺的段落）
+        text = "".join(s.get("text", "").replace("\n", " ") for s in kept)
     return {"text": text, "language": data.get("language", ""), "no_speech_prob": no_speech, "confidence": 0.9}
 
 
