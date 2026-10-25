@@ -61,7 +61,7 @@
       <p v-if="noticeMessage && !isRecording" class="status notice">{{ noticeMessage }}</p>
       <div v-if="isRecording" class="listen-status">
         <div class="level-bar"><div class="level-fill" :class="{ speaking }" :style="{ width: `${Math.round(level * 100)}%` }"></div></div>
-        <span>{{ speaking ? '偵測到說話' : '聆聽中' }}{{ slowMode ? '（額度有限，預覽放慢）' : '' }}</span>
+        <span>{{ speaking ? '偵測到說話' : '聆聽中' }}{{ slowNetwork ? '（網路較慢，翻譯會延遲）' : slowMode ? '（額度有限，預覽放慢）' : '' }}</span>
         <span v-if="debug" class="debug">{{ debugText }}</span>
       </div>
       <button
@@ -82,6 +82,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { Mp3Encoder } from '@breezystack/lamejs'
 import { authApi } from '../api/http'
 import { speechApi, type QuotaInfo, type TranslatorResponse } from '../api/speech'
 import { useSessionStore } from '../stores/session'
@@ -111,6 +112,8 @@ const languages = [
 // 連續收音：一直錄，用「有沒有人講話」決定一句話的開始和結束，不再每 3 秒硬切
 const BLOCK_SIZE = 2048
 const TARGET_SAMPLE_RATE = 16000
+const MP3_KBPS = 32
+const SLOW_NETWORK_SEC = 4     // 一句定稿來回超過這麼久，提示網路慢
 const PREROLL_SEC = 0.3        // 開口前保留的聲音，避免第一個字被切掉
 const PAUSE_SEC = 0.7          // 停頓多久算一句講完
 const MAX_PIECE_SEC = 8        // 一直講不停時，最長多久先定稿一段
@@ -157,6 +160,7 @@ const isRecording = ref(false)
 const speaking = ref(false)
 const level = ref(0)
 const slowMode = ref(false)
+const slowNetwork = ref(false)
 // 網址加 ?debug=1 顯示音量數字，現場調整用
 const debug = new URLSearchParams(location.search).has('debug')
 const debugText = ref('')
@@ -563,7 +567,11 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
   try {
     // 不把前一段文字當提示給 Whisper：換人講另一種語言時，提示會把新的話硬轉成前一種語言
     requestCount++
+    const sentAt = performance.now()
+    const slowTimer = window.setTimeout(() => { slowNetwork.value = true }, SLOW_NETWORK_SEC * 1000)
     const result = await speechApi.translate(wav, langA.value.join(','), langB.value.join(','), { isFinal: true })
+    window.clearTimeout(slowTimer)
+    slowNetwork.value = performance.now() - sentAt > SLOW_NETWORK_SEC * 1000
     target.final = true
     applyQuota(result)
     if (result.status === 'ok' && result.transcript) {
@@ -682,7 +690,17 @@ function scrollToBottom() {
 }
 
 // 降到 16kHz 單聲道 16-bit WAV（Whisper 本來就用 16kHz，檔案也小）
+// 上傳前壓成 MP3（每秒約 4 KB，WAV 是 32 KB）：展場網路差時等最久的就是上傳
 function encodeWav(segment: Block[]): Blob {
+  const pcm = toPcm16k(segment)
+  try {
+    return encodeMp3(pcm)
+  } catch {
+    return pcmToWav(pcm)
+  }
+}
+
+function toPcm16k(segment: Block[]): Int16Array {
   const inputRate = audioContext?.sampleRate || 48000
   const total = segment.reduce((sum, b) => sum + b.data.length, 0)
   const input = new Float32Array(total)
@@ -695,15 +713,39 @@ function encodeWav(segment: Block[]): Blob {
   let peak = 0
   for (let i = 0; i < total; i++) peak = Math.max(peak, Math.abs(input[i]))
   const gain = peak > 0 ? Math.min(20, 0.9 / peak) : 1
-  if (gain > 1) for (let i = 0; i < total; i++) input[i] *= gain
   const ratio = inputRate / TARGET_SAMPLE_RATE
   const outLength = Math.floor(total / ratio)
-  const view = new DataView(new ArrayBuffer(44 + outLength * 2))
+  const out = new Int16Array(outLength)
+  for (let i = 0; i < outLength; i++) {
+    const start = Math.floor(i * ratio)
+    const end = Math.min(total, Math.floor((i + 1) * ratio))
+    let sum = 0
+    for (let j = start; j < end; j++) sum += input[j]
+    const sample = Math.max(-1, Math.min(1, (sum / Math.max(1, end - start)) * gain))
+    out[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
+  }
+  return out
+}
+
+function encodeMp3(pcm: Int16Array): Blob {
+  const encoder = new Mp3Encoder(1, TARGET_SAMPLE_RATE, MP3_KBPS)
+  const chunks: Uint8Array[] = []
+  for (let i = 0; i < pcm.length; i += 1152) {
+    const out = encoder.encodeBuffer(pcm.subarray(i, i + 1152))
+    if (out.length) chunks.push(new Uint8Array(out))
+  }
+  const tail = encoder.flush()
+  if (tail.length) chunks.push(new Uint8Array(tail))
+  return new Blob(chunks as BlobPart[], { type: 'audio/mpeg' })
+}
+
+function pcmToWav(pcm: Int16Array): Blob {
+  const view = new DataView(new ArrayBuffer(44 + pcm.length * 2))
   const writeStr = (pos: number, str: string) => {
     for (let i = 0; i < str.length; i++) view.setUint8(pos + i, str.charCodeAt(i))
   }
   writeStr(0, 'RIFF')
-  view.setUint32(4, 36 + outLength * 2, true)
+  view.setUint32(4, 36 + pcm.length * 2, true)
   writeStr(8, 'WAVE')
   writeStr(12, 'fmt ')
   view.setUint32(16, 16, true)
@@ -714,15 +756,8 @@ function encodeWav(segment: Block[]): Blob {
   view.setUint16(32, 2, true)
   view.setUint16(34, 16, true)
   writeStr(36, 'data')
-  view.setUint32(40, outLength * 2, true)
-  for (let i = 0; i < outLength; i++) {
-    const start = Math.floor(i * ratio)
-    const end = Math.min(total, Math.floor((i + 1) * ratio))
-    let sum = 0
-    for (let j = start; j < end; j++) sum += input[j]
-    const sample = Math.max(-1, Math.min(1, sum / Math.max(1, end - start)))
-    view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
-  }
+  view.setUint32(40, pcm.length * 2, true)
+  for (let i = 0; i < pcm.length; i++) view.setInt16(44 + i * 2, pcm[i], true)
   return new Blob([view], { type: 'audio/wav' })
 }
 
