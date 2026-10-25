@@ -571,6 +571,17 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
       target.transcript = result.transcript
       target.translation = result.translated_text
       owner = placePiece(owner, target, result)
+      // 兩個人接著講（插話）被拆成好幾段：後面的段落各自放在新的對話框
+      let previous = target
+      for (const segment of result.segments?.slice(1) || []) {
+        owner = ownerOf(previous, owner)
+        owner.pieces.splice(owner.pieces.indexOf(previous) + 1, 0, {
+          id: ++nextId, transcript: segment.transcript, translation: segment.translated_text,
+          final: true, sent: true, interimSeq: 0,
+        })
+        previous = owner.pieces[owner.pieces.indexOf(previous) + 1]
+        owner = placePiece(owner, previous, { ...result, ...segment })
+      }
     } else {
       // 辨識不出話（或是旁邊的人講別的語言）：這段其實是背景聲，音量算進背景，之後才不會一直被當成有人講話
       if (isRecording.value) addBackground(levels)

@@ -1,5 +1,6 @@
+import asyncio
 import re
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -25,6 +26,13 @@ INTERIM_STT_MODEL = "whisper-large-v3-turbo"
 router = APIRouter()
 
 
+class TranslatorSegment(BaseModel):
+    transcript: str
+    translated_text: str
+    source_lang: str
+    target_lang: str
+
+
 class TranslatorResponse(BaseModel):
     transcript: str
     translated_text: str
@@ -36,6 +44,8 @@ class TranslatorResponse(BaseModel):
     status: str = "ok"
     # Groq 剩餘次數（從這次呼叫的回應標頭記下來的，不另外打 API），畫面右上角跟著更新
     quota: Optional[dict] = None
+    # 一段話裡其實是兩個人接著講（不同語言）時拆開的結果；第一段同時放在上面的欄位
+    segments: Optional[List[TranslatorSegment]] = None
 
 
 # These are the language families the two-way mode can match reliably.  The
@@ -72,6 +82,97 @@ _LANGUAGE_ALIASES = {
 _MALAY_INDONESIAN = {"ms", "id"}
 
 
+# 各語言用的文字；兩邊文字不同時（例如中文 vs 英文），可以從字數判斷一句夾雜的話主要是哪一種
+_SCRIPT_OF_FAMILY = {
+    "zh": "han", "ja": "kana", "ko": "hangul", "th": "thai", "ar": "arabic",
+    "ru": "cyrillic", "hi": "devanagari",
+}
+_SCRIPT_PATTERNS = {
+    "han": re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]"),
+    "kana": re.compile(r"[\u3040-\u30ff]"),
+    "hangul": re.compile(r"[\uac00-\ud7af]"),
+    "thai": re.compile(r"[\u0e00-\u0e7f]"),
+    "arabic": re.compile(r"[\u0600-\u06ff]"),
+    "cyrillic": re.compile(r"[\u0400-\u04ff]+"),
+    "devanagari": re.compile(r"[\u0900-\u097f]+"),
+    "latin": re.compile(r"[A-Za-z\u00c0-\u024f]+(?:'[A-Za-z]+)?"),
+}
+# 一個英文單字大約等於 1.5 個中文字的份量
+_SCRIPT_WEIGHT = {"latin": 1.5, "cyrillic": 1.5, "devanagari": 1.5}
+
+
+def _script_of(code: str) -> str:
+    return _SCRIPT_OF_FAMILY.get(_language_family(code), "latin")
+
+
+def _dominant_side(text: str, side_a: list, side_b: list) -> Optional[int]:
+    """一句話同時有兩邊的文字（中英夾雜、對方插話）時，回傳份量比較多的那一邊（0=A、1=B）；
+    沒有夾雜或兩邊用同一種文字（例如英文 vs 馬來文）就回傳 None，交給語音辨識的判斷"""
+    scripts_a = {_script_of(c) for c in side_a}
+    scripts_b = {_script_of(c) for c in side_b}
+    if scripts_a & scripts_b:
+        return None
+
+    def amount(scripts):
+        return sum(len(_SCRIPT_PATTERNS[sc].findall(text)) * _SCRIPT_WEIGHT.get(sc, 1.0) for sc in scripts)
+
+    a, b = amount(scripts_a), amount(scripts_b)
+    if not a or not b:
+        return None
+    return 0 if a >= b else 1
+
+
+# 夾雜的一段要多大才算「另一個人講的一句」：約 4 個中文字或 3 個英文單字；
+# 更小的（「I think 這個 is great」裡的「這個」）當成同一個人順口夾雜
+_MIN_SPLIT_AMOUNT = 4
+_TOKEN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af\u0e00-\u0e7f\u0600-\u06ff]"
+                    r"|[\u0400-\u04ff]+|[\u0900-\u097f]+|[A-Za-z\u00c0-\u024f]+(?:'[A-Za-z]+)?|.", re.S)
+
+
+def _split_mixed(text: str, side_a: list, side_b: list) -> Optional[list]:
+    """一段話裡有兩邊各自成句的內容（對方插話、兩人接著講沒有停頓），
+    拆成 [(文字, 0=A/1=B), ...]；沒有夾雜或只是順口夾幾個字就回傳 None"""
+    scripts = ({_script_of(c) for c in side_a}, {_script_of(c) for c in side_b})
+    if scripts[0] & scripts[1]:
+        return None
+    runs = []  # [文字, 哪一邊, 份量]
+    for token in _TOKEN.findall(text):
+        side = None
+        for sc, pattern in _SCRIPT_PATTERNS.items():
+            if pattern.fullmatch(token):
+                side = 0 if sc in scripts[0] else 1 if sc in scripts[1] else None
+                weight = _SCRIPT_WEIGHT.get(sc, 1.0)
+                break
+        if side is None or not runs or runs[-1][1] != side:
+            if side is None:
+                if runs:
+                    runs[-1][0] += token  # 標點、空白、數字跟著前面那段
+                else:
+                    runs.append([token, None, 0.0])
+                continue
+            runs.append([token, side, weight])
+        else:
+            runs[-1][0] += token
+            runs[-1][2] += weight
+    # 太小段的併進前一段（開頭的併進下一段）
+    merged = []
+    for run in runs:
+        if merged and (run[2] < _MIN_SPLIT_AMOUNT or run[1] is None or merged[-1][1] is None):
+            merged[-1][0] += run[0]
+            if merged[-1][1] is None:
+                merged[-1][1], merged[-1][2] = run[1], run[2]
+            continue
+        if merged and merged[-1][2] < _MIN_SPLIT_AMOUNT and len(merged) == 1:
+            run = [merged.pop()[0] + run[0], run[1], run[2]]
+        if merged and merged[-1][1] == run[1]:
+            merged[-1][0] += run[0]
+            merged[-1][2] += run[2]
+        else:
+            merged.append(run)
+    parts = [(t.strip(), side) for t, side, _ in merged if t.strip() and side is not None]
+    return parts if len(parts) > 1 else None
+
+
 def _normalize_lang(code: Optional[str]) -> str:
     if not code:
         return ""
@@ -100,6 +201,10 @@ def _selected_lang(code: str) -> str:
 
 def _language_matches(detected: str, selected: str) -> bool:
     return _language_family(detected) == _language_family(selected)
+
+
+def _any_matches(detected: str, side: list) -> bool:
+    return any(_language_matches(detected, c) for c in side)
 
 
 def _empty(status: str = "empty") -> TranslatorResponse:
@@ -169,8 +274,40 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
     detected_raw = stt_result.get("language") or detect_language(transcript)
     detected_lang = _normalize_lang(detected_raw)
 
+    known = _any_matches(detected_lang, side_a) or _any_matches(detected_lang, side_b)
+    parts = _split_mixed(transcript, side_a, side_b) if known and is_final else None
+    if parts:
+        # 兩個人的話接在一起（插話、沒有停頓）：拆開各自翻給對方，畫面上變成兩個對話框
+        sides = (side_a, side_b)
+        jobs = []
+        for text, side in parts:
+            own, other = sides[side], sides[1 - side]
+            jobs.append((_pick_source(own, text, detected_lang), other[0], text))
+        done = await asyncio.gather(*[_translate_part(t, src, tgt, is_final) for src, tgt, t in jobs])
+        segments = [
+            TranslatorSegment(transcript=tr, translated_text=tx, source_lang=src, target_lang=tgt)
+            for (src, tgt, _), (tr, tx) in zip(jobs, done)
+        ]
+        print(f"✂️ [Translator] 拆成 {len(segments)} 段: {[s.transcript[:20] for s in segments]}")
+        first = segments[0]
+        return TranslatorResponse(
+            transcript=first.transcript, translated_text=first.translated_text,
+            detected_lang=detected_lang, source_lang=first.source_lang, target_lang=first.target_lang,
+            confidence=float(stt_result.get("confidence") or 0.0), segments=segments,
+        )
+
     source_lang = target_lang = ""
+    dominant = _dominant_side(transcript, side_a, side_b)
+    if dominant is not None and known:
+        # 夾雜的話：照主要的文字決定方向，整句翻成另一邊的主要語言
+        own, other = (side_a, side_b) if dominant == 0 else (side_b, side_a)
+        source_lang = _pick_source(own, transcript, detected_lang)
+        target_lang = other[0]
+        if not _any_matches(detected_lang, own):
+            print(f"🔀 [Translator] 夾雜語言，改用主要文字判斷 {detected_raw} → {source_lang}: {transcript[:40]}")
     for own, other in ((side_a, side_b), (side_b, side_a)):
+        if source_lang:
+            break
         match = next((c for c in own if _language_matches(detected_lang, c)), None)
         if not match and detected_lang in _MALAY_INDONESIAN:
             # Whisper 常把馬來文認成印尼文（反之亦然），只選了其中一種時視為同一種
@@ -184,27 +321,37 @@ async def _translate_audio(audio: UploadFile, lang_a: str, lang_b: str, is_final
         print(f"🔇 [Translator] 略過非選定語言 {detected_raw}: {transcript[:40]}")
         return _empty("other_lang")
 
+    transcript, translated = await _translate_part(transcript, source_lang, target_lang, is_final)
+    return TranslatorResponse(
+        transcript=transcript,
+        translated_text=translated,
+        detected_lang=detected_lang,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        confidence=float(stt_result.get("confidence") or 0.0),
+    )
+
+
+def _pick_source(own: list, text: str, detected_lang: str) -> str:
+    """這一邊選了好幾種語言時，決定這段話是哪一種"""
+    return next((c for c in own if _language_matches(detected_lang, c)), None) or max(
+        own, key=lambda c: len(_SCRIPT_PATTERNS[_script_of(c)].findall(text)))
+
+
+async def _translate_part(text: str, source_lang: str, target_lang: str, is_final: bool):
     if _language_family(source_lang) == "zh":
         converter = _TO_TRADITIONAL if source_lang == "zh-TW" else _TO_SIMPLIFIED
-        transcript = _ZH_PUNCT.sub(lambda m: _ZH_PUNCT_MAP[m.group(1)], converter.convert(transcript))
+        text = _ZH_PUNCT.sub(lambda m: _ZH_PUNCT_MAP[m.group(1)], converter.convert(text))
 
     translation = await translation_service.translate_text(
-        transcript,
+        text,
         target_lang,
         source_lang,
         fast=not is_final,
     )
     if translation.get("error"):
         raise HTTPException(status_code=502, detail="Translation service failed")
-
-    return TranslatorResponse(
-        transcript=transcript,
-        translated_text=translation.get("text") or "",
-        detected_lang=detected_lang,
-        source_lang=source_lang,
-        target_lang=target_lang,
-        confidence=float(stt_result.get("confidence") or 0.0),
-    )
+    return text, translation.get("text") or ""
 
 
 @router.get("/quota")
