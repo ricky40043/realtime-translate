@@ -113,11 +113,30 @@ def _script_of(code: str) -> str:
     return _SCRIPT_OF_FAMILY.get(_language_family(code), "latin")
 
 
+def _han_belongs_to_kana(text: str) -> bool:
+    """日文句子裡有假名，漢字（私、日本語、大好…）也是日文的一部分。
+    句子裡假名夠多（至少 2 個、約佔漢字三成以上）就當日文；中文句子偶爾夾一個日文單字不算"""
+    kana = len(_SCRIPT_PATTERNS["kana"].findall(text))
+    han = len(_SCRIPT_PATTERNS["han"].findall(text))
+    return kana >= 2 and kana * 10 >= han * 3
+
+
+def _effective_scripts(text: str, side_a: list, side_b: list) -> tuple:
+    """每一邊用到哪些文字。日文和中文共用漢字：一邊有日文、另一邊是中文時，
+    漢字要歸給日文那邊（否則漢字多的日文句子會被當成中文）；另一邊根本沒有漢字就一定歸日文"""
+    scripts = [{_script_of(c) for c in side_a}, {_script_of(c) for c in side_b}]
+    for mine, other in ((0, 1), (1, 0)):
+        if "kana" in scripts[mine] and "han" not in scripts[mine]:
+            if "han" not in scripts[other] or _han_belongs_to_kana(text):
+                scripts[mine].add("han")
+                scripts[other].discard("han")
+    return scripts[0], scripts[1]
+
+
 def _dominant_side(text: str, side_a: list, side_b: list) -> Optional[int]:
     """一句話同時有兩邊的文字（中英夾雜、對方插話）時，回傳份量比較多的那一邊（0=A、1=B）；
     沒有夾雜或兩邊用同一種文字（例如英文 vs 馬來文）就回傳 None，交給語音辨識的判斷"""
-    scripts_a = {_script_of(c) for c in side_a}
-    scripts_b = {_script_of(c) for c in side_b}
+    scripts_a, scripts_b = _effective_scripts(text, side_a, side_b)
     if scripts_a & scripts_b:
         return None
 
@@ -140,11 +159,17 @@ _TOKEN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af\u0e0
 def _split_mixed(text: str, side_a: list, side_b: list) -> Optional[list]:
     """一段話裡有兩邊各自成句的內容（對方插話、兩人接著講沒有停頓），
     拆成 [(文字, 0=A/1=B), ...]；沒有夾雜或只是順口夾幾個字就回傳 None"""
-    scripts = ({_script_of(c) for c in side_a}, {_script_of(c) for c in side_b})
+    scripts = _effective_scripts(text, side_a, side_b)
     if scripts[0] & scripts[1]:
         return None
+    # 中文和日文共用漢字：一句一句各自判斷漢字歸誰（「我覺得這個很好。ありがとう」前一句是中文，
+    # 「私は日本語は大好きです。」整句是日文）
+    tokens = []
+    for clause in re.split(r"(?<=[。！？!?\n])", text):
+        clause_scripts = _effective_scripts(clause, side_a, side_b)
+        tokens.extend((token, clause_scripts) for token in _TOKEN.findall(clause))
     runs = []  # [文字, 哪一邊, 份量]
-    for token in _TOKEN.findall(text):
+    for token, scripts in tokens:
         side = None
         for sc, pattern in _SCRIPT_PATTERNS.items():
             if pattern.fullmatch(token):
