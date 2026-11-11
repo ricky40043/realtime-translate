@@ -204,7 +204,7 @@ const modelOptions = ref<{ stt: ModelOption[]; translate: ModelOption[] }>({
 })
 const sttModel = ref(loadSetting('translatorSttModel', 'groq'))
 const translateModel = ref(loadSetting('translatorTranslateModel', 'groq'))
-const isLocal = computed(() => sttModel.value !== 'groq' || translateModel.value !== 'groq')
+const isLocal = computed(() => sttModel.value.startsWith('local:') || translateModel.value.startsWith('ollama:'))
 const settingsOpen = ref(true)
 const authReady = ref(false)
 const isRecording = ref(false)
@@ -249,6 +249,8 @@ let nextId = 0
 let followBottom = true
 let lastActivityAt = 0         // 開始錄音或最後一次翻出內容的時間
 let pendingFinals = 0
+// 每次開始／停止就換一個編號：停止前送出、停止後才回來的結果不再顯示
+let runId = 0
 
 const overlap = computed(() => langA.value.find(a => langB.value.some(b => sameFamily(a, b))) || '')
 const overlapName = computed(() => languageName(overlap.value))
@@ -499,6 +501,7 @@ async function startRecording() {
     entry = null
     interimInterval = MIN_INTERVAL
     slowMode.value = false
+    runId++
     isRecording.value = true
     lastActivityAt = performance.now() / 1000
     settingsOpen.value = false
@@ -513,9 +516,13 @@ async function startRecording() {
   }
 }
 
+// 按停止就立刻停：還沒講完的那句不送出，還在路上的翻譯回來也不顯示；畫面上已經有的字保留
 function stopRecording() {
-  if (isRecording.value && voicedSec >= MIN_VOICE_SEC) sendFinal(blocks.length, true)
-  else endEntry()
+  runId++
+  for (const e of entries.value) for (const p of e.pieces) p.final = true
+  resetPiece()
+  endEntry()
+  for (const e of [...entries.value]) pruneEntry(e)
   isRecording.value = false
   teardownAudio()
 }
@@ -665,11 +672,13 @@ function maybeSendInterim() {
   const target = piece
   const owner = entry
   const seq = ++interimSeq
+  const run = runId
   const wav = encodeWav(blocks)
   requestCount++
   timedTranslate(wav, false)
     .then(result => {
       applyQuota(result)
+      if (run !== runId) return
       interimInterval = Math.max(MIN_INTERVAL, interimInterval * 0.9)
       // 本機模型比較慢（沒有顯卡時一句要好幾秒）：預覽間隔跟著拉長，不要把定稿卡在後面排隊
       if ((result.server_ms ?? 0) > 1000) interimInterval = Math.min(8, Math.max(interimInterval, (result.server_ms! / 1000) * 1.5))
@@ -713,10 +722,10 @@ function sendFinal(n: number, endsEntry: boolean) {
   }
 
   pendingFinals++
-  submitFinal(wav, levels, owner, target, 0).finally(() => { pendingFinals-- })
+  submitFinal(wav, levels, owner, target, 0, runId).finally(() => { pendingFinals-- })
 }
 
-async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Piece, attempt: number): Promise<void> {
+async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Piece, attempt: number, run: number): Promise<void> {
   try {
     // 不把前一段文字當提示給 Whisper：換人講另一種語言時，提示會把新的話硬轉成前一種語言
     requestCount++
@@ -725,8 +734,9 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     const result = await timedTranslate(wav, true)
     window.clearTimeout(slowTimer)
     slowNetwork.value = performance.now() - sentAt > SLOW_NETWORK_SEC * 1000
-    target.final = true
     applyQuota(result)
+    if (run !== runId) return
+    target.final = true
     if (result.status === 'ok' && result.transcript) {
       lastActivityAt = performance.now() / 1000
       target.transcript = result.transcript
@@ -755,12 +765,13 @@ async function submitFinal(wav: Blob, levels: number[], owner: Entry, target: Pi
     pruneEntry(ownerOf(target, owner))
     scrollToBottom()
   } catch (error: any) {
+    if (run !== runId) return
     if (error?.status === 401 && attempt < 1 && await guestLogin()) {
-      return submitFinal(wav, levels, owner, target, attempt + 1)
+      return submitFinal(wav, levels, owner, target, attempt + 1, run)
     }
     if (error?.status === 429 && attempt < 4) {
       await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)))
-      return submitFinal(wav, levels, owner, target, attempt + 1)
+      return submitFinal(wav, levels, owner, target, attempt + 1, run)
     }
     target.final = true
     pruneEntry(ownerOf(target, owner))
