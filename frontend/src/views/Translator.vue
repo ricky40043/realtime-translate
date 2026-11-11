@@ -2,6 +2,7 @@
   <main class="translator-page">
     <header class="top-bar">
       <h1>雙向翻譯機</h1>
+      <div class="top-end">
       <div class="top-right">
       <div class="meta-row">
         <button class="sync-chip" :class="sync.status.value" type="button" :aria-expanded="syncOpen" @click="syncOpen = !syncOpen">
@@ -15,6 +16,11 @@
       <button class="pair-chip" type="button" :disabled="sameLanguage" @click="settingsOpen = !settingsOpen">
         <span class="pair-text">{{ sideLabel(langA) }} ⇄ {{ sideLabel(langB) }}</span>
         <span aria-hidden="true">{{ settingsOpen ? '⌃' : '⌄' }}</span>
+      </button>
+      </div>
+      <!-- 電腦版：QR Code 常駐右上角，手機直接掃就進同一個房間（手機版用「同步」按鈕展開） -->
+      <button class="mini-qr" type="button" title="掃描加入同步房間（點一下放大）" aria-label="同步房間 QR Code，點一下放大" @click="syncOpen = !syncOpen">
+        <canvas ref="miniQrCanvas"></canvas>
       </button>
       </div>
     </header>
@@ -258,6 +264,7 @@ const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(
 const syncOpen = ref(false)
 const copied = ref(false)
 const qrCanvas = ref<HTMLCanvasElement | null>(null)
+const miniQrCanvas = ref<HTMLCanvasElement | null>(null)
 const sync = useTranslatorSync({
   getToken: () => sessionStore.token,
   refreshToken: guestLogin,
@@ -289,11 +296,15 @@ const displayEntries = computed<Entry[]>(() => {
 })
 watch(entries, () => sync.schedulePush(), { deep: true })
 watch([langA, langB], () => sync.pushLangs(), { deep: true })
+function drawQr(canvas: HTMLCanvasElement | null, width: number) {
+  if (canvas) QRCode.toCanvas(canvas, sync.shareUrl.value, { width, margin: 1 }).catch(() => {})
+}
+// 小 QR 一直在右上角；大的 QR 在展開同步面板時才畫。房間代碼換了就重畫
 watch([syncOpen, sync.roomId], async ([open]) => {
-  if (!open) return
   await nextTick()
-  if (qrCanvas.value) QRCode.toCanvas(qrCanvas.value, sync.shareUrl.value, { width: 168, margin: 1 }).catch(() => {})
-})
+  drawQr(miniQrCanvas.value, 96)
+  if (open) drawQr(qrCanvas.value, 168)
+}, { flush: 'post' })
 
 async function copyShareUrl() {
   try {
@@ -318,8 +329,7 @@ onMounted(async () => {
   if (!sessionStore.isAuthenticated && !(await guestLogin())) return
   authReady.value = true
   sync.start()
-  // 電腦直接開網頁（沒有帶房間的連結）：先顯示 QR Code，手機掃了就進同一個房間
-  if (!sync.joinedViaLink && window.matchMedia?.('(pointer: fine)').matches) syncOpen.value = true
+  drawQr(miniQrCanvas.value, 96)
   loadModels()
   refreshQuota()
   quotaTimer = window.setInterval(refreshQuota, 60_000)
@@ -972,6 +982,11 @@ function languageName(code: string): string {
 
 .top-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding-bottom: .6rem; }
 h1 { margin: 0; font-size: 1.15rem; white-space: nowrap; }
+.top-end { min-width: 0; display: flex; align-items: flex-start; gap: .6rem; }
+.mini-qr { display: none; flex: 0 0 auto; padding: 0; border: 0; border-radius: 8px; background: #fff; line-height: 0; }
+.mini-qr canvas { width: 96px; height: 96px; border-radius: 8px; }
+/* 有滑鼠的電腦且畫面夠寬才顯示；手機不佔版面 */
+@media (min-width: 700px) and (hover: hover) { .mini-qr { display: block; } }
 .top-right { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
 .quota { margin: 0; color: rgba(255,255,255,.5); font-size: .7rem; white-space: nowrap; }
 .meta-row { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: .2rem .6rem; }
