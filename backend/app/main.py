@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from .api import auth, rooms, ingest, speech, speech_staged, translator
 from .ws.hub import manager
+from .ws import translator_sync
 from .db.pool import init_db
 
 load_dotenv()
@@ -38,6 +39,7 @@ app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
 app.include_router(speech.router, prefix="/api/speech", tags=["speech"])
 app.include_router(speech_staged.router, prefix="/api/speech-staged", tags=["speech-staged"])
 app.include_router(translator.router, prefix="/api/translator", tags=["translator"])
+app.include_router(translator_sync.router)  # /ws/translator-sync/{room}：雙向翻譯機多裝置同步
 
 @app.on_event("startup")
 async def startup_event():
