@@ -410,7 +410,7 @@ async def _translate_part(text: str, source_lang: str, target_lang: str, is_fina
         if not local_ai.LOCAL_LLM_URL:
             raise HTTPException(status_code=503, detail="本機翻譯模型沒有啟動")
         translation = await local_ai.translate(text, _TARGET_NAMES.get(target_lang, target_lang), translate_model[7:],
-                                            skip_if_busy=not is_final)
+                                            skip_if_busy=not is_final, target_code=target_lang)
         if translation.get("error"):
             raise HTTPException(status_code=503, detail="本機翻譯模型沒有回應，請確認 Ollama 有開著")
         return text, translation.get("text") or ""

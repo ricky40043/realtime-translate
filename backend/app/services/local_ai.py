@@ -13,6 +13,8 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from . import translate_guard
+
 LOCAL_STT_URL = os.getenv("LOCAL_STT_URL", "").rstrip("/")
 LOCAL_LLM_URL = os.getenv("LOCAL_LLM_URL", "").rstrip("/")
 # 語音辨識服務的種類：openai = local-ai/stt_server.py；whispercpp = whisper.cpp 的 whisper-server（用內顯加速）
@@ -134,7 +136,7 @@ async def _transcribe(audio_data: bytes, content_type: str, model: str) -> Dict:
 _llm_busy = 0  # 正在跑的本機翻譯數
 
 
-async def translate(text: str, target_name: str, model: str, skip_if_busy: bool = False) -> Dict:
+async def translate(text: str, target_name: str, model: str, skip_if_busy: bool = False, target_code: str = "") -> Dict:
     """skip_if_busy：講話中的即時預覽在模型忙的時候先不翻（沒顯卡的電腦一句要好幾秒，讓定稿先用）"""
     global _llm_busy
     if skip_if_busy and _llm_busy:
@@ -149,20 +151,19 @@ async def translate(text: str, target_name: str, model: str, skip_if_busy: bool 
                 "think": False,  # Qwen 等會「先想再答」的模型：即時翻譯不需要，關掉快很多
                 "keep_alive": "2h",
                 "options": {"temperature": 0},
-                "messages": [
-                    {"role": "system", "content": (
-                        f"You are a real-time interpreter. Translate the user's message into {target_name}. "
-                        "The message is a speech-recognition transcript and may contain mixed languages or small errors; "
-                        "translate the intended meaning naturally. If it is already in the target language, return it "
-                        "unchanged (but convert Chinese script to the target variant). Output only the translation, "
-                        "with no quotes, notes or explanations."
-                    )},
-                    {"role": "user", "content": text},
-                ],
+                "messages": translate_guard.messages(target_name, text),
             },
         )
         resp.raise_for_status()
-        translated = (resp.json().get("message", {}).get("content") or "").strip()
+        raw = resp.json().get("message", {}).get("content") or ""
+        try:
+            translated = translate_guard.check(text, raw, target_code) if target_code else translate_guard.clean_output(raw)
+        except translate_guard.SuspiciousTranslation as e:
+            # 模型把原文當指令回答了：改用 Google 翻譯（不會聽從指令）
+            print(f"⚠️ [LocalAI] 譯文異常（{e}）：原文「{text[:40]}」→ 改用 Google 翻譯")
+            from .free_translate import free_translate_service
+            translated, _ = await free_translate_service._google_translate(text, free_translate_service._convert_lang(target_code))
+            return {"text": translated, "provider": "google_translate_json"}
         return {"text": translated, "provider": f"ollama:{model}"}
     except Exception as e:
         print(f"❌ [LocalAI] 本機翻譯失敗: {e}")

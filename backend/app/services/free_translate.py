@@ -10,6 +10,7 @@ import time
 import httpx
 from typing import Dict, List, Optional
 from . import groq_quota
+from .translate_guard import SuspiciousTranslation, check as guard_check, messages as guard_messages
 
 print("✅ 翻譯：Groq LLM 為主，Google Translate JSON 端點為備援（async httpx）")
 
@@ -93,7 +94,11 @@ class FreeTranslateService:
         attempts.append(("google", lambda: self._google_translate(text, tgt)))
 
         errors = []
+        llm_unreliable = False
         for name, attempt in attempts:
+            # 模型把原文當指令回答了：其他 LLM 多半也會，直接改用 Google 翻譯（不會聽從指令）
+            if llm_unreliable and name.startswith("groq:"):
+                continue
             try:
                 translated, provider_name = await attempt()
                 latency_ms = int((time.time() - start) * 1000)
@@ -106,6 +111,10 @@ class FreeTranslateService:
                     'quality': 0.9,
                     'provider': provider_name,
                 }
+            except SuspiciousTranslation as e:
+                llm_unreliable = True
+                errors.append(f"{name}: 譯文異常（{e}）")
+                print(f"   [Translate] ⚠️ {name} 譯文異常（{e}）：原文「{text[:40]}」→ 改用 Google 翻譯")
             except Exception as e:
                 errors.append(f"{name}: {e}")
                 print(f"   [Translate] {name} {src}->{tgt} 失敗: {str(e).split(' for url')[0]}")
@@ -134,24 +143,12 @@ class FreeTranslateService:
                 'model': model,
                 'temperature': 0,
                 'reasoning_effort': 'low',
-                'messages': [
-                    {
-                        'role': 'system',
-                        'content': (
-                            f"You are a real-time interpreter. Translate the user's message into {target_name}. "
-                            "The message is a speech-recognition transcript and may contain mixed languages or small errors; "
-                            "translate the intended meaning naturally. If it is already in the target language, return it "
-                            "unchanged (but convert Chinese script to the target variant). Output only the translation, "
-                            "with no quotes, notes or explanations."
-                        ),
-                    },
-                    {'role': 'user', 'content': text},
-                ],
+                'messages': guard_messages(target_name, text),
             },
         )
         groq_quota.record(model, resp.headers)
         resp.raise_for_status()
-        translated = (resp.json()['choices'][0]['message']['content'] or '').strip()
+        translated = guard_check(text, resp.json()['choices'][0]['message']['content'] or '', tgt)
         if not translated:
             raise RuntimeError("Groq 回傳空白翻譯")
         return translated, f'groq:{model}'
