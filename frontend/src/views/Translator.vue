@@ -3,15 +3,34 @@
     <header class="top-bar">
       <h1>雙向翻譯機</h1>
       <div class="top-right">
-      <p v-if="quota" class="quota" title="Groq 剩餘可呼叫次數，每次翻譯後更新">
-        語音剩 {{ quotaText(quota.speech) }} · 翻譯剩 {{ quotaText(quota.translate) }}
-      </p>
+      <div class="meta-row">
+        <button class="sync-chip" :class="sync.status.value" type="button" :aria-expanded="syncOpen" @click="syncOpen = !syncOpen">
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span>{{ syncChipText }}</span>
+        </button>
+        <p v-if="quota" class="quota" title="Groq 剩餘可呼叫次數，每次翻譯後更新">
+          語音剩 {{ quotaText(quota.speech) }} · 翻譯剩 {{ quotaText(quota.translate) }}
+        </p>
+      </div>
       <button class="pair-chip" type="button" :disabled="sameLanguage" @click="settingsOpen = !settingsOpen">
         <span class="pair-text">{{ sideLabel(langA) }} ⇄ {{ sideLabel(langB) }}</span>
         <span aria-hidden="true">{{ settingsOpen ? '⌃' : '⌄' }}</span>
       </button>
       </div>
     </header>
+
+    <div v-if="syncOpen" class="sync-panel">
+      <canvas ref="qrCanvas" class="sync-qr" aria-label="同步房間 QR Code"></canvas>
+      <div class="sync-info">
+        <strong>{{ syncStatusText }}</strong>
+        <p>用手機掃描 QR Code，或開啟下面的連結，就會進到同一個房間：一台收音、其他裝置同步看到所有翻譯內容。</p>
+        <p class="sync-code">房間代碼 <b>{{ sync.roomId.value }}</b></p>
+        <div class="sync-actions">
+          <button type="button" @click="copyShareUrl">{{ copied ? '已複製 ✓' : '複製連結' }}</button>
+          <button type="button" :disabled="isRecording" :title="isRecording ? '請先停止翻譯' : ''" @click="startNewConversation">新對話</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="settingsOpen" class="settings-panel">
       <template v-for="(side, sideIndex) in sides" :key="side.key">
@@ -53,11 +72,11 @@
     </div>
 
     <section ref="conversationEl" class="conversation" aria-live="polite" @scroll="onConversationScroll">
-      <p v-if="!visibleEntries.length" class="empty-hint">
+      <p v-if="!displayEntries.length" class="empty-hint">
         {{ isRecording ? '請開始說話，翻譯會即時出現在這裡' : '按下「開始翻譯」後直接說話，不用每句按按鈕' }}
       </p>
       <article
-        v-for="entry in visibleEntries"
+        v-for="entry in displayEntries"
         :key="entry.id"
         class="entry"
         :class="[entry.sourceLang ? (isSideA(entry.sourceLang) ? 'side-a' : 'side-b') : 'side-a', { live: !isDone(entry) }]"
@@ -98,6 +117,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { Mp3Encoder } from '@breezystack/lamejs'
+import QRCode from 'qrcode'
+import { useTranslatorSync } from '../composables/translatorSync'
 import { authApi } from '../api/http'
 import { speechApi, type ModelOption, type QuotaInfo, type TranslatorResponse } from '../api/speech'
 import { useSessionStore } from '../stores/session'
@@ -156,7 +177,8 @@ interface Piece {
   interimSeq: number       // 已套用的預覽序號，舊的回應不能蓋掉新的
 }
 interface Entry {
-  id: number
+  id: number | string      // 別台裝置同步過來的句子用字串（房間內不會撞號）
+  t: number                // 句子開始的時間（伺服器時間），多台裝置的對話依此排序
   pieces: Piece[]
   sourceLang: string
   targetLang: string
@@ -232,10 +254,72 @@ watch(translateModel, v => saveSetting('translatorTranslateModel', v))
 watch([sttModel, translateModel], () => { if (authReady.value) refreshQuota() })  // 換模型就顯示那個模型的剩餘次數
 const visibleEntries = computed(() => entries.value.filter(e => entryTranscript(e)))
 
+// ── 多裝置同步：同一個房間的裝置共用同一份對話 ─────────────────────
+const syncOpen = ref(false)
+const copied = ref(false)
+const qrCanvas = ref<HTMLCanvasElement | null>(null)
+const sync = useTranslatorSync({
+  getToken: () => sessionStore.token,
+  refreshToken: guestLogin,
+  getLocal: () => visibleEntries.value,
+  getLangs: () => ({ langA: langA.value, langB: langB.value }),
+  // 房間裡別台裝置設定的語言配對：照那邊的（畫面左右、顏色才會一致）
+  onRemoteLangs: (a, b) => {
+    if (a.join() !== langA.value.join()) langA.value = a
+    if (b.join() !== langB.value.join()) langB.value = b
+  },
+  onRemoteChange: () => scrollToBottom(),
+})
+const syncChipText = computed(() => {
+  if (sync.status.value === 'online') return sync.peers.value > 1 ? `同步 · ${sync.peers.value} 台` : '同步'
+  return sync.status.value === 'error' ? '同步失敗' : sync.status.value === 'offline' ? '重新連線中' : '連線中'
+})
+const syncStatusText = computed(() => {
+  if (sync.status.value === 'online') return sync.peers.value > 1 ? `已連線，房間內共 ${sync.peers.value} 台裝置` : '已連線，等待其他裝置加入'
+  if (sync.status.value === 'error') return '無法加入這個房間（代碼錯誤或人數已滿）'
+  return sync.status.value === 'offline' ? '連線中斷，正在重新連線…' : '連線中…'
+})
+// 其他裝置講的話（遠端）和自己講的話合併，依時間排序
+const displayEntries = computed<Entry[]>(() => {
+  const remote: Entry[] = sync.remoteEntries.value.map(r => ({
+    id: r.key, t: r.t, sourceLang: r.sourceLang, targetLang: r.targetLang, ended: r.ended,
+    pieces: r.pieces.map(p => ({ id: 0, sent: true, interimSeq: 0, ...p })),
+  })).filter(e => entryTranscript(e))
+  return remote.length ? [...visibleEntries.value, ...remote].sort((a, b) => a.t - b.t) : visibleEntries.value
+})
+watch(entries, () => sync.schedulePush(), { deep: true })
+watch([langA, langB], () => sync.pushLangs(), { deep: true })
+watch([syncOpen, sync.roomId], async ([open]) => {
+  if (!open) return
+  await nextTick()
+  if (qrCanvas.value) QRCode.toCanvas(qrCanvas.value, sync.shareUrl.value, { width: 168, margin: 1 }).catch(() => {})
+})
+
+async function copyShareUrl() {
+  try {
+    await navigator.clipboard.writeText(sync.shareUrl.value)
+    copied.value = true
+    window.setTimeout(() => { copied.value = false }, 1500)
+  } catch {
+    window.prompt('複製這個連結：', sync.shareUrl.value)
+  }
+}
+
+function startNewConversation() {
+  if (isRecording.value) return
+  if (entries.value.length && !window.confirm('要開始新對話嗎？目前畫面會清除，並換成新的房間代碼（其他裝置要重新掃 QR Code）。')) return
+  entries.value = []
+  entry = null
+  sync.newRoom()
+}
+
 onMounted(async () => {
   sessionStore.loadAuth()
   if (!sessionStore.isAuthenticated && !(await guestLogin())) return
   authReady.value = true
+  sync.start()
+  // 電腦直接開網頁（沒有帶房間的連結）：先顯示 QR Code，手機掃了就進同一個房間
+  if (!sync.joinedViaLink && window.matchMedia?.('(pointer: fine)').matches) syncOpen.value = true
   loadModels()
   refreshQuota()
   quotaTimer = window.setInterval(refreshQuota, 60_000)
@@ -408,6 +492,7 @@ async function startRecording() {
     isRecording.value = true
     lastActivityAt = performance.now() / 1000
     settingsOpen.value = false
+    syncOpen.value = false
     testNetwork()
     requestWakeLock()
   } catch (error) {
@@ -528,7 +613,7 @@ function addBackground(levels: number[]) {
 
 function ensureEntry() {
   if (!entry || entry.ended) {
-    entry = { id: ++nextId, pieces: [], sourceLang: '', targetLang: '', ended: false }
+    entry = { id: ++nextId, t: sync.now(), pieces: [], sourceLang: '', targetLang: '', ended: false }
     entries.value.push(entry)
     if (entries.value.length > 100) entries.value.shift()
     entry = entries.value[entries.value.length - 1]  // 用 reactive 版本，之後改動才會更新畫面
@@ -689,7 +774,7 @@ function placePiece(owner: Entry, target: Piece, result: TranslatorResponse): En
   if (sameFamily(owner.sourceLang, result.source_lang)) return owner
 
   const moved = owner.pieces.splice(index)
-  const split: Entry = { id: ++nextId, pieces: moved, sourceLang: result.source_lang, targetLang: result.target_lang, ended: owner.ended }
+  const split: Entry = { id: ++nextId, t: owner.t + 0.5, pieces: moved, sourceLang: result.source_lang, targetLang: result.target_lang, ended: owner.ended }
   owner.ended = true
   entries.value.splice(entries.value.findIndex(e => e.id === owner.id) + 1, 0, split)
   const created = entries.value.find(e => e.id === split.id)!
@@ -889,6 +974,23 @@ function languageName(code: string): string {
 h1 { margin: 0; font-size: 1.15rem; white-space: nowrap; }
 .top-right { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
 .quota { margin: 0; color: rgba(255,255,255,.5); font-size: .7rem; white-space: nowrap; }
+.meta-row { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: .2rem .6rem; }
+.sync-chip { display: inline-flex; align-items: center; gap: .35rem; padding: .15rem .6rem; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(255,255,255,.08); color: #fff; font-size: .75rem; }
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; }
+.sync-chip.online .sync-dot { background: #4ade80; }
+.sync-chip.error .sync-dot { background: #f87171; }
+.sync-panel { flex-shrink: 0; display: flex; align-items: center; gap: 1rem; padding: .8rem; margin-bottom: .6rem; border-radius: 14px; background: rgba(255,255,255,.08); }
+.sync-qr { flex: 0 0 auto; width: 168px; height: 168px; border-radius: 10px; background: #fff; }
+.sync-info { min-width: 0; display: flex; flex-direction: column; gap: .4rem; font-size: .85rem; }
+.sync-info p { margin: 0; opacity: .75; line-height: 1.5; }
+.sync-code b { font-size: 1.05rem; letter-spacing: .12em; }
+.sync-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.sync-actions button { min-height: 40px; padding: 0 .9rem; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; background: rgba(196,181,253,.15); color: #fff; font-size: .9rem; }
+@media (max-width: 480px) {
+  .sync-panel { flex-direction: column; align-items: stretch; text-align: center; }
+  .sync-qr { align-self: center; }
+  .sync-actions { justify-content: center; }
+}
 .pair-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pair-chip { max-width: min(62vw, 420px); display: flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(255,255,255,.08); color: #fff; font-size: .9rem; }
 

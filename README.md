@@ -56,3 +56,12 @@ realtime-translate/
   .env.example        # 環境變數範例
   README.md           # 專案說明
 ```
+## 雙向翻譯機：多裝置同步
+
+`/translator` 會自動建立一個同步房間（網址帶 `?room=代碼`）：
+
+- 先用電腦開網頁 → 會顯示 QR Code，手機掃描就進到同一個房間
+- 手機當麥克風收音，電腦（或其他手機）即時看到一模一樣的對話；任何一台都可以收音，對話依時間合併
+- 語言配對也會同步；後來加入的裝置會拿到目前完整畫面，重新整理不會掉
+- 「新對話」會換新的房間代碼並清空畫面
+- 後端：`/ws/translator-sync/{room}`（`backend/app/ws/translator_sync.py`，記憶體內，無資料庫）；測試：`cd backend && pytest tests`
